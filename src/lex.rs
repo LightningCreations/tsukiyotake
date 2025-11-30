@@ -1,0 +1,126 @@
+use logos::{Logos, Span};
+
+#[derive(Logos)]
+pub enum Token<'src> {
+    #[token("and")]
+    And,
+    #[token("break")]
+    Break,
+    #[token("do")]
+    Do,
+    #[token("else")]
+    Else,
+    #[token("elseif")]
+    ElseIf,
+    #[token("end")]
+    End,
+    #[token("false")]
+    False,
+    #[token("for")]
+    For,
+    #[token("function")]
+    Function,
+    #[token("goto")]
+    Goto,
+    #[token("if")]
+    If,
+    #[token("in")]
+    In,
+    #[token("local")]
+    Local,
+    #[token("nil")]
+    Nil,
+    #[token("not")]
+    Not,
+    #[token("or")]
+    Or,
+    #[token("repeat")]
+    Repeat,
+    #[token("return")]
+    Return,
+    #[token("then")]
+    Then,
+    #[token("true")]
+    True,
+    #[token("until")]
+    Until,
+    #[token("while")]
+    While,
+    #[regex("[A-Za-z_][A-Za-z0-9_]*", |lexer| lexer.span())]
+    Ident(Span),
+    #[token("+")]
+    Plus,
+    #[token("-")]
+    Minus,
+    #[token("*")]
+    Star,
+    #[token("/")]
+    Slash,
+    #[token("%")]
+    Modulo,
+    #[token("^")]
+    Hat,
+    #[token("#")]
+    Count,
+    #[token("&")]
+    BitAnd,
+    #[token("~")]
+    BitNot,
+    #[token("|")]
+    BitOr,
+    #[token("<<")]
+    LeftShift,
+    #[token(">>")]
+    RightShift,
+    #[token("//")]
+    IntDiv,
+    #[token("==")]
+    Equals,
+    #[token("~=")]
+    NotEquals,
+    #[token("<=")]
+    LessEquals,
+    #[token(">=")]
+    GreaterEquals,
+    #[token("<")]
+    LeftAngle,
+    #[token(">")]
+    RightAngle,
+    #[token("=")]
+    Assign,
+    #[token("(")]
+    OParen,
+    #[token(")")]
+    CParen,
+    #[token("{")]
+    OBrace,
+    #[token("}")]
+    CBrace,
+    #[token("[")]
+    OSquare,
+    #[token("]")]
+    CSquare,
+    #[token("::")]
+    ColonColon,
+    #[token(";")]
+    Semi,
+    #[token(":")]
+    Colon,
+    #[token(",")]
+    Comma,
+    #[token(".")]
+    Dot,
+    #[token("..")]
+    DotDot,
+    #[token("...")]
+    DotDotDot,
+
+    #[regex("[1-9][0-9]*(\\.[0-9]+)?([eE][1-9][0-9]*)?", |lexer| lexer.span())]
+    #[regex("0x[0-9A-Fa-f]*(\\.[0-9A-Fa-f]*)?([pP][1-9][0-9]*)?", |lexer| lexer.span())]
+    Number(Span),
+
+    #[regex("[[:space:]]+", logos::skip)]
+    #[regex("--[\\[\\n]*\\n", logos::skip)]
+    #[regex("--\\[[^\\]]*\\]", logos::skip)]
+    Whitespace,
+}
