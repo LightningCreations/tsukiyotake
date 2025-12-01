@@ -24,7 +24,7 @@ macro_rules! TryFromInt {
         impl $name {
             #[allow(non_upper_case_globals)]
             const fn from_int(x: usize) -> Self {
-                $(pub const $var: usize = $name::$var as usize as usize;)*
+                $(pub const $var: usize = $name::$var as usize;)*
 
                 match x {
                     $($var => Self::$var,)*
