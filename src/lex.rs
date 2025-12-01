@@ -2,6 +2,7 @@ use logos::{Lexer, Logos, Span};
 
 #[derive(Logos, Debug, PartialEq)]
 #[logos(error(Span, |lex| lex.span()))]
+// #[logos(export_dir="diagrams")]
 pub enum Token<'src> {
     #[token("and")]
     And,
@@ -120,7 +121,7 @@ pub enum Token<'src> {
     #[regex("0x[0-9A-Fa-f]*(\\.[0-9A-Fa-f]*)?([pP][1-9][0-9]*)?", |lexer| lexer.slice())]
     Number(&'src str),
 
-    #[regex("\"([^\"\\\n\r]|(\\\\[\\\\nr'\"abtv])|(\\\\u\\{[0-9A-Fa-f]{1,8}\\})|(\\\\z[[:space:]]*)|(\\\\[0-9]{1,3})|(\\\\x[0-9A-Fa-f]{2}))\"", |lexer| lexer.slice())]
+    #[regex("\"([^\"\\\n\r]|(\\\\[\\\\nr'\"abtv])|(\\\\u\\{[0-9A-Fa-f]{1,8}\\})|(\\\\z[[:space:]]*)|(\\\\[0-9]{1,3})|(\\\\x[0-9A-Fa-f]{2}))*\"", |lexer| lexer.slice())]
     StringLiteral(&'src str),
 
     #[regex("\\[=*\\[", parse_raw_string)]
