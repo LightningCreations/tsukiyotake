@@ -48,8 +48,8 @@ pub enum Token<'src> {
     Until,
     #[token("while")]
     While,
-    #[regex("[A-Za-z_][A-Za-z0-9_]*", |lexer| lexer.span())]
-    Ident(Span),
+    #[regex("[A-Za-z_][A-Za-z0-9_]*", |lexer| lexer.slice())]
+    Ident(&'src str),
     #[token("+")]
     Plus,
     #[token("-")]
@@ -171,28 +171,22 @@ fn parse_raw_string<'src>(lex: &mut Lexer<'src, Token<'src>>) -> Result<&'src st
 
 #[cfg(test)]
 mod test {
-    use alloc::vec;
-    use alloc::vec::Vec;
-    use logos::{Lexer, Span};
+    use logos::Logos;
 
     use crate::lex::Token;
 
     #[test]
     pub fn hello_world() {
         let input = r#"print("Hello World")"#;
-        let lexed: Vec<(Token, Span)> = Lexer::new(input)
-            .spanned()
-            .map(|(x, y)| (x.unwrap(), y))
-            .collect();
+        let mut lexer = Token::lexer(input).spanned();
 
+        assert_eq!(lexer.next(), Some((Ok(Token::Ident("print")), 0..5)));
+        assert_eq!(lexer.next(), Some((Ok(Token::OParen), 5..6)));
         assert_eq!(
-            lexed,
-            vec![
-                (Token::Ident(0..5), 0..5),
-                (Token::OParen, 5..6),
-                (Token::StringLiteral(r#""Hello World""#), 6..19),
-                (Token::CParen, 19..20)
-            ]
+            lexer.next(),
+            Some((Ok(Token::StringLiteral(r#""Hello World""#)), 6..19)),
         );
+        assert_eq!(lexer.next(), Some((Ok(Token::CParen), 19..20)));
+        assert_eq!(lexer.next(), None);
     }
 }
