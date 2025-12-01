@@ -1,4 +1,4 @@
-# Tuskiyotake
+# Tsukiyotake
 
 Lua 5.4 interpreter written in pure Rust.
 
