@@ -1,6 +1,6 @@
 use logos::{Lexer, Logos, Span};
 
-#[derive(Logos)]
+#[derive(Logos, Debug, PartialEq)]
 #[logos(error(Span, |lex| lex.span()))]
 pub enum Token {
     #[token("and")]
@@ -166,4 +166,32 @@ fn parse_raw_string(lex: &mut Lexer<Token>) -> Result<Span, Span> {
 
     lex.bump(total_len + rem.len());
     Err(lex.span())
+}
+
+#[cfg(test)]
+mod test {
+    use alloc::vec;
+    use alloc::vec::Vec;
+    use logos::{Lexer, Span};
+
+    use crate::lex::Token;
+
+    #[test]
+    pub fn hello_world() {
+        let input = r#"print("Hello World")"#;
+        let lexed: Vec<(Token, Span)> = Lexer::new(input)
+            .spanned()
+            .map(|(x, y)| (x.unwrap(), y))
+            .collect();
+
+        assert_eq!(
+            lexed,
+            vec![
+                (Token::Ident(0..5), 0..5),
+                (Token::OParen, 5..6),
+                (Token::StringLiteral(6..19), 6..19),
+                (Token::CParen, 19..20)
+            ]
+        );
+    }
 }
