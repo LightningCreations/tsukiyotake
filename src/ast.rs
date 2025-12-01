@@ -1,0 +1,178 @@
+use alloc::{boxed::Box, vec::Vec};
+use logos::Span;
+
+pub type Spanned<T> = (Span, T);
+pub type List<T> = Spanned<Vec<Spanned<T>>>;
+
+pub struct Block<'src> {
+    pub stats: Vec<Stat<'src>>,
+    pub retstat: Option<List<Exp<'src>>>,
+}
+
+pub enum Stat<'src> {
+    Empty,
+    Assign {
+        vars: List<Var<'src>>,
+        exps: List<Exp<'src>>,
+    },
+    FunctionCall(Spanned<FunctionCall<'src>>),
+    Label(Spanned<&'src str>),
+    Break,
+    Goto(Spanned<&'src str>),
+    DoBlock(Box<Spanned<Block<'src>>>),
+    While(Spanned<Exp<'src>>, Box<Spanned<Block<'src>>>),
+    RepeatUntil(Box<Block<'src>>, Spanned<Exp<'src>>),
+    If {
+        branches: Vec<(Spanned<Exp<'src>>, Box<Spanned<Block<'src>>>)>,
+        else_block: Box<Spanned<Block<'src>>>,
+    },
+    ForNumerical {
+        var: Spanned<&'src str>,
+        initial: Spanned<Exp<'src>>,
+        limit: Spanned<Exp<'src>>,
+        step: Option<Spanned<Exp<'src>>>,
+    },
+    ForGeneric {
+        names: List<&'src str>,
+        exps: List<Exp<'src>>,
+        block: Box<Spanned<Block<'src>>>,
+    },
+    Function {
+        name: Spanned<FuncName<'src>>,
+        body: Spanned<FuncBody<'src>>,
+    },
+    LocalFunction {
+        name: Spanned<&'src str>,
+        body: Spanned<FuncBody<'src>>,
+    },
+    Local {
+        names: Spanned<AttNameList<'src>>,
+        exps: Option<List<Exp<'src>>>,
+    },
+}
+
+pub struct AttNameList<'src> {
+    pub names: Vec<(Spanned<&'src str>, Option<Spanned<&'src str>>)>,
+}
+
+pub struct FuncName<'src> {
+    pub path: Vec<Spanned<&'src str>>,
+    pub method_name: Spanned<&'src str>,
+}
+
+// Otherwise known as lvalue
+pub enum Var<'src> {
+    Name(Spanned<&'src str>),
+    Index {
+        lhs: Box<Spanned<PrefixExp<'src>>>,
+        idx: Box<Spanned<Exp<'src>>>,
+    },
+    Path {
+        lhs: Box<Spanned<PrefixExp<'src>>>,
+        member: Box<Spanned<&'src str>>,
+    },
+}
+
+pub enum Exp<'src> {
+    Nil,
+    False,
+    True,
+    NumeralInt(Spanned<i64>),
+    NumeralFloat(Spanned<f64>),
+    LiteralString(Spanned<&'src str>),
+    VarArg,
+    FunctionDef(Spanned<FuncBody<'src>>),
+    PrefixExp(Spanned<PrefixExp<'src>>),
+    TableConstructor(List<Field<'src>>),
+    BinExp {
+        lhs: Box<Spanned<Exp<'src>>>,
+        op: Spanned<BinOp>,
+        rhs: Box<Spanned<Exp<'src>>>,
+    },
+    UnExp {
+        op: Spanned<UnOp>,
+        rhs: Box<Spanned<Exp<'src>>>,
+    },
+}
+
+pub enum PrefixExp<'src> {
+    Var(Spanned<Var<'src>>),
+    FunctionCall(Spanned<FunctionCall<'src>>),
+    Parens(Box<Spanned<Exp<'src>>>),
+}
+
+pub struct FunctionCall<'src> {
+    pub lhs: Box<Spanned<PrefixExp<'src>>>,
+    pub method: Option<Spanned<&'src str>>,
+    pub args: Spanned<Args<'src>>,
+}
+
+pub enum Args<'src> {
+    List(List<Exp<'src>>),
+    TableConstructor(List<Field<'src>>),
+    String(&'src str),
+}
+
+pub struct FuncBody<'src> {
+    pub params: List<&'src str>,
+    pub varargs: Option<Spanned<()>>,
+    pub block: Spanned<Block<'src>>,
+}
+
+pub enum Field<'src> {
+    Exp {
+        field: Box<Spanned<Exp<'src>>>,
+        val: Box<Spanned<Exp<'src>>>,
+    },
+    Named {
+        field: Spanned<&'src str>,
+        val: Box<Spanned<Exp<'src>>>,
+    },
+    Unnamed {
+        val: Box<Spanned<Exp<'src>>>,
+    }
+}
+
+impl<'src> Field<'src> {
+    /// Convenience method for further stages
+    pub fn val(&self) -> &Spanned<Exp<'src>> {
+        match self {
+            Field::Exp { val, .. } => val,
+            Field::Named { val, .. } => val,
+            Field::Unnamed { val } => val,
+        }
+    }
+}
+
+// most names are based on the related metatable function
+pub enum BinOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Idiv,
+    Pow,
+    Mod,
+    Band,
+    Bxor,
+    Bor,
+    Shr,
+    Shl,
+    Concat,
+    Lt,
+    Le,
+    Gt, // derived from Le
+    Ge, // derived from Lt
+    Eq,
+    Neq, // derived from Eq
+    And, // keyword/boolean
+    Or, // keyword/boolean
+}
+
+// most names are based on the related metatable function
+pub enum UnOp {
+    Unm,
+    Not, // keyword/boolean
+    Len,
+    Bnot,
+}

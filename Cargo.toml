@@ -11,5 +11,6 @@ logos = { version = "0.15.1", default-features = false, features = [
     "logos-derive",
     # "debug",
 ] }
+
 [features]
 std = ["logos/std"]
