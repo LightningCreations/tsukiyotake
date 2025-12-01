@@ -2,7 +2,7 @@ use logos::{Lexer, Logos, Span};
 
 #[derive(Logos, Debug, PartialEq)]
 #[logos(error(Span, |lex| lex.span()))]
-pub enum Token {
+pub enum Token<'src> {
     #[token("and")]
     And,
     #[token("break")]
@@ -116,15 +116,15 @@ pub enum Token {
     #[token("...")]
     DotDotDot,
 
-    #[regex("[1-9][0-9]*(\\.[0-9]+)?([eE][1-9][0-9]*)?", |lexer| lexer.span())]
-    #[regex("0x[0-9A-Fa-f]*(\\.[0-9A-Fa-f]*)?([pP][1-9][0-9]*)?", |lexer| lexer.span())]
-    Number(Span),
+    #[regex("[1-9][0-9]*(\\.[0-9]+)?([eE][1-9][0-9]*)?", |lexer| lexer.slice())]
+    #[regex("0x[0-9A-Fa-f]*(\\.[0-9A-Fa-f]*)?([pP][1-9][0-9]*)?", |lexer| lexer.slice())]
+    Number(&'src str),
 
-    #[regex("\"([^\"\\\n\r]|(\\\\[\\\\nr'\"abtv])|(\\\\u\\{[0-9A-Fa-f]{1,8}\\})|(\\\\z[[:space:]]*)|(\\\\[0-9]{1,3})|(\\\\x[0-9A-Fa-f]{2}))\"", |lexer| lexer.span())]
-    StringLiteral(Span),
+    #[regex("\"([^\"\\\n\r]|(\\\\[\\\\nr'\"abtv])|(\\\\u\\{[0-9A-Fa-f]{1,8}\\})|(\\\\z[[:space:]]*)|(\\\\[0-9]{1,3})|(\\\\x[0-9A-Fa-f]{2}))\"", |lexer| lexer.slice())]
+    StringLiteral(&'src str),
 
     #[regex("\\[=*\\[", parse_raw_string)]
-    RawString(Span),
+    RawString(&'src str),
 
     #[regex("[[:space:]]+", logos::skip)]
     #[regex("--[\\[\\n]*\\n", logos::skip)]
@@ -132,7 +132,7 @@ pub enum Token {
     Whitespace,
 }
 
-fn parse_raw_string(lex: &mut Lexer<Token>) -> Result<Span, Span> {
+fn parse_raw_string<'src>(lex: &mut Lexer<'src, Token<'src>>) -> Result<&'src str, Span> {
     let n = lex.slice().len().strict_sub(2);
 
     let mut rem = lex.remainder();
@@ -160,7 +160,7 @@ fn parse_raw_string(lex: &mut Lexer<Token>) -> Result<Span, Span> {
 
         if b[1 + n] == b']' {
             lex.bump(total_len + 2 + n);
-            return Ok(lex.span());
+            return Ok(lex.slice());
         }
     }
 
@@ -189,7 +189,7 @@ mod test {
             vec![
                 (Token::Ident(0..5), 0..5),
                 (Token::OParen, 5..6),
-                (Token::StringLiteral(6..19), 6..19),
+                (Token::StringLiteral(r#""Hello World""#), 6..19),
                 (Token::CParen, 19..20)
             ]
         );
