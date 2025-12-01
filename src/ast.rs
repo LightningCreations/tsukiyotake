@@ -20,8 +20,14 @@ pub enum Stat<'src> {
     Break,
     Goto(Spanned<&'src str>),
     DoBlock(Box<Spanned<Block<'src>>>),
-    While(Spanned<Exp<'src>>, Box<Spanned<Block<'src>>>),
-    RepeatUntil(Box<Block<'src>>, Spanned<Exp<'src>>),
+    While {
+        cond: Spanned<Exp<'src>>,
+        block: Box<Spanned<Block<'src>>>,
+    },
+    RepeatUntil {
+        block: Box<Block<'src>>,
+        cond: Spanned<Exp<'src>>,
+    },
     If {
         branches: Vec<(Spanned<Exp<'src>>, Box<Spanned<Block<'src>>>)>,
         else_block: Box<Spanned<Block<'src>>>,
@@ -130,7 +136,7 @@ pub enum Field<'src> {
     },
     Unnamed {
         val: Box<Spanned<Exp<'src>>>,
-    }
+    },
 }
 
 impl<'src> Field<'src> {
@@ -166,7 +172,7 @@ pub enum BinOp {
     Eq,
     Neq, // derived from Eq
     And, // keyword/boolean
-    Or, // keyword/boolean
+    Or,  // keyword/boolean
 }
 
 // most names are based on the related metatable function
