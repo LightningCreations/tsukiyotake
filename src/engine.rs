@@ -4,6 +4,8 @@ use core::mem::MaybeUninit;
 
 use crate::sync::RwLock;
 
+use alloc::boxed::Box;
+
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub struct Brand<'ctx>(PhantomData<&'ctx mut &'ctx mut ()>);
 
