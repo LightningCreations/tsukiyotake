@@ -129,8 +129,8 @@ pub enum Token<'src> {
     RawString(&'src str),
 
     #[regex("[[:space:]]+", logos::skip)]
-    #[regex("--[\\[\\n]*\\n", logos::skip)]
     #[regex("--\\[[^\\]]*\\]", logos::skip)]
+    #[regex(r#"--[^\n]*\n"#, logos::skip)] // Line comment
     Whitespace,
 }
 
