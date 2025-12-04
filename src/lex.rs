@@ -120,6 +120,7 @@ pub enum Token<'src> {
 
     #[regex("[1-9][0-9]*(\\.[0-9]+)?([eE][1-9][0-9]*)?", |lexer| lexer.slice())]
     #[regex("0x[0-9A-Fa-f]*(\\.[0-9A-Fa-f]*)?([pP][1-9][0-9]*)?", |lexer| lexer.slice())]
+    #[token("0", |lexer| lexer.slice())]
     Number(&'src str),
 
     #[regex("\"([^\"\\\n\r]|(\\\\[\\\\nr'\"abtv])|(\\\\u\\{[0-9A-Fa-f]{1,8}\\})|(\\\\z[[:space:]]*)|(\\\\[0-9]{1,3})|(\\\\x[0-9A-Fa-f]{2}))*\"", |lexer| lexer.slice())]
@@ -286,5 +287,54 @@ mod test {
         let mut lexer = Token::lexer(input).spanned();
 
         assert_eq!(lexer.next(), Some((Ok(Token::Function), 32..40)));
+        assert_eq!(lexer.next(), Some((Ok(Token::Ident("fact")), 41..45)));
+        assert_eq!(lexer.next(), Some((Ok(Token::OParen), 45..46)));
+        assert_eq!(lexer.next(), Some((Ok(Token::Ident("n")), 46..47)));
+        assert_eq!(lexer.next(), Some((Ok(Token::CParen), 47..48)));
+        assert_eq!(lexer.next(), Some((Ok(Token::If), 53..55)));
+        assert_eq!(lexer.next(), Some((Ok(Token::Ident("n")), 56..57)));
+        assert_eq!(lexer.next(), Some((Ok(Token::Equals), 58..60)));
+        assert_eq!(lexer.next(), Some((Ok(Token::Number("0")), 61..62)));
+        assert_eq!(lexer.next(), Some((Ok(Token::Then), 63..67)));
+        assert_eq!(lexer.next(), Some((Ok(Token::Return), 76..82)));
+        assert_eq!(lexer.next(), Some((Ok(Token::Number("1")), 83..84)));
+        assert_eq!(lexer.next(), Some((Ok(Token::Else), 89..93)));
+        assert_eq!(lexer.next(), Some((Ok(Token::Return), 102..108)));
+        assert_eq!(lexer.next(), Some((Ok(Token::Ident("n")), 109..110)));
+        assert_eq!(lexer.next(), Some((Ok(Token::Star), 111..112)));
+        assert_eq!(lexer.next(), Some((Ok(Token::Ident("fact")), 113..117)));
+        assert_eq!(lexer.next(), Some((Ok(Token::OParen), 117..118)));
+        assert_eq!(lexer.next(), Some((Ok(Token::Ident("n")), 118..119)));
+        assert_eq!(lexer.next(), Some((Ok(Token::Minus), 119..120)));
+        assert_eq!(lexer.next(), Some((Ok(Token::Number("1")), 120..121)));
+        assert_eq!(lexer.next(), Some((Ok(Token::CParen), 121..122)));
+        assert_eq!(lexer.next(), Some((Ok(Token::End), 127..130)));
+        assert_eq!(lexer.next(), Some((Ok(Token::End), 131..134)));
+        assert_eq!(lexer.next(), Some((Ok(Token::Ident("print")), 136..141)));
+        assert_eq!(lexer.next(), Some((Ok(Token::OParen), 141..142)));
+        assert_eq!(
+            lexer.next(),
+            Some((Ok(Token::StringLiteral(r#""enter a number:""#)), 142..159))
+        );
+        assert_eq!(lexer.next(), Some((Ok(Token::CParen), 159..160)));
+        assert_eq!(lexer.next(), Some((Ok(Token::Ident("a")), 161..162)));
+        assert_eq!(lexer.next(), Some((Ok(Token::Assign), 163..164)));
+        assert_eq!(lexer.next(), Some((Ok(Token::Ident("io")), 165..167)));
+        assert_eq!(lexer.next(), Some((Ok(Token::Dot), 167..168)));
+        assert_eq!(lexer.next(), Some((Ok(Token::Ident("read")), 168..172)));
+        assert_eq!(lexer.next(), Some((Ok(Token::OParen), 172..173)));
+        assert_eq!(
+            lexer.next(),
+            Some((Ok(Token::StringLiteral(r#""*number""#)), 173..182))
+        );
+        assert_eq!(lexer.next(), Some((Ok(Token::CParen), 182..183)));
+        assert_eq!(lexer.next(), Some((Ok(Token::Ident("print")), 184..189)));
+        assert_eq!(lexer.next(), Some((Ok(Token::OParen), 189..190)));
+        assert_eq!(lexer.next(), Some((Ok(Token::Ident("fact")), 190..194)));
+        assert_eq!(lexer.next(), Some((Ok(Token::OParen), 194..195)));
+        assert_eq!(lexer.next(), Some((Ok(Token::Ident("a")), 195..196)));
+        assert_eq!(lexer.next(), Some((Ok(Token::CParen), 196..197)));
+        assert_eq!(lexer.next(), Some((Ok(Token::CParen), 197..198)));
+        assert_eq!(lexer.next(), None);
     }
 }
