@@ -4,12 +4,15 @@ use crate::ast;
 use alloc::borrow::ToOwned;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
+use alloc::vec;
+use core::str::FromStr;
+
+use lalrpop_util::ParseError;
 
 grammar<'src>(input: &'src str);
 
 extern {
     type Location = usize;
-    type Error = ();
 
     enum Token<'src> {
         "and" => Token::And, 
@@ -79,14 +82,21 @@ extern {
 Box<T>: Box<T> = <t: T> => Box::new(t);
 Spanned<T>: ast::Spanned<T> = <l: @L> <t: T> <r: @R> => (t, l..r);
 List<T>: ast::List<T> = <t: Spanned<UnspannedList<T>>> => t;
+DotList<T>: ast::List<T> = <t: Spanned<UnspannedDotList<T>>> => t;
 
 UnspannedList<T>: Vec<ast::Spanned<T>> = {
-    <mut v:(<Spanned<T>> ",")*> <e:Spanned<T>?> => match e {
-        None => v,
-        Some(e) => {
-            v.push(e);
-            v
-        }
+    <t:Spanned<T>> => vec![t],
+    <mut l:UnspannedList<T>> "," <t:Spanned<T>> => {
+        l.push(t);
+        l
+    }
+};
+
+UnspannedDotList<T>: Vec<ast::Spanned<T>> = {
+    <t:Spanned<T>> => vec![t],
+    <mut l:UnspannedDotList<T>> "." <t:Spanned<T>> => {
+        l.push(t);
+        l
     }
 };
 
@@ -100,20 +110,155 @@ pub Block: ast::Block<'src> = {
 
 pub Stat: ast::Stat<'src> = {
     ";" => ast::Stat::Empty,
+    <vars:List<Var>> "=" <exps:List<Exp>> => ast::Stat::Assign { vars, exps },
     <x:Spanned<FunctionCall>> => ast::Stat::FunctionCall(x),
+    "if" <main:CondThenBlock> <elseifs:("elseif" <CondThenBlock>)*> <else_block:("else" <Box<Spanned<Block>>>)?> "end" => {
+        ast::Stat::If {
+            main,
+            elseifs,
+            else_block,
+        }
+    },
+    "function" <name:Spanned<FuncName>> <body:Spanned<FuncBody>> => {
+        ast::Stat::Function {
+            name,
+            body,
+        }
+    },
+}
+
+CondThenBlock: (ast::Spanned<ast::Exp<'src>>, Box<ast::Spanned<ast::Block<'src>>>) = {
+    <Spanned<Exp>> "then" <Box<Spanned<Block>>> => (<>)
+}
+
+pub FuncName: ast::FuncName<'src> = {
+    <path:DotList<"ident">> => ast::FuncName { path, method: None }
 }
 
 pub Var: ast::Var<'src> = {
     <name:Spanned<"ident">> => ast::Var::Name(name),
+    <lhs:Box<Spanned<PrefixExp>>> "." <member:Spanned<"ident">> => {
+        ast::Var::Path {
+            lhs,
+            member,
+        }
+    },
 }
 
 pub Exp: ast::Exp<'src> = {
+    #[precedence(level="0")]
     "nil" => ast::Exp::Nil,
-    <x:Spanned<String>> => ast::Exp::LiteralString(x),
+    <Spanned<"number">> =>? {
+        if let Ok(x) = i64::from_str(<>.0) {
+            Ok(ast::Exp::NumeralInt((x, <>.1)))
+        } else if let Ok(x) = f64::from_str(<>.0) {
+            Ok(ast::Exp::NumeralFloat((x, <>.1))) // TODO: Proper float parsing
+        } else {
+            Err(ParseError::User {
+                error: "number is too big"
+            })
+        }
+    },
+    <Spanned<String>> => ast::Exp::LiteralString(<>),
+    <Spanned<PrefixExp>> => ast::Exp::PrefixExp(<>),
+
+    #[precedence(level="1")] #[assoc(side="right")]
+    <lhs:Box<Spanned<Exp>>> "^" <rhs:Box<Spanned<Exp>>> => ast::Exp::BinExp {
+        lhs,
+        op: ast::BinOp::Pow,
+        rhs,
+    },
+
+    #[precedence(level="2")]
+    "-" <rhs:Box<Spanned<Exp>>> => ast::Exp::UnExp {
+        op: ast::UnOp::Unm,
+        rhs,
+    },
+
+    #[precedence(level="3")] #[assoc(side="left")]
+    <lhs:Box<Spanned<Exp>>> "*" <rhs:Box<Spanned<Exp>>> => ast::Exp::BinExp {
+        lhs,
+        op: ast::BinOp::Mul,
+        rhs,
+    },
+
+    #[precedence(level="4")] #[assoc(side="left")]
+    <lhs:Box<Spanned<Exp>>> "+" <rhs:Box<Spanned<Exp>>> => ast::Exp::BinExp {
+        lhs,
+        op: ast::BinOp::Add,
+        rhs,
+    },
+    <lhs:Box<Spanned<Exp>>> "-" <rhs:Box<Spanned<Exp>>> => ast::Exp::BinExp {
+        lhs,
+        op: ast::BinOp::Sub,
+        rhs,
+    },
+
+    #[precedence(level="5")] #[assoc(side="right")]
+    <lhs:Box<Spanned<Exp>>> ".." <rhs:Box<Spanned<Exp>>> => ast::Exp::BinExp {
+        lhs,
+        op: ast::BinOp::Concat,
+        rhs,
+    },
+
+    #[precedence(level="6")] #[assoc(side="left")]
+    <lhs:Box<Spanned<Exp>>> "<<" <rhs:Box<Spanned<Exp>>> => ast::Exp::BinExp {
+        lhs,
+        op: ast::BinOp::Shl,
+        rhs,
+    },
+    <lhs:Box<Spanned<Exp>>> ">>" <rhs:Box<Spanned<Exp>>> => ast::Exp::BinExp {
+        lhs,
+        op: ast::BinOp::Shr,
+        rhs,
+    },
+
+    #[precedence(level="7")] #[assoc(side="left")]
+    <lhs:Box<Spanned<Exp>>> "&" <rhs:Box<Spanned<Exp>>> => ast::Exp::BinExp {
+        lhs,
+        op: ast::BinOp::Bxor,
+        rhs,
+    },
+
+    #[precedence(level="8")] #[assoc(side="left")]
+    <lhs:Box<Spanned<Exp>>> "~" <rhs:Box<Spanned<Exp>>> => ast::Exp::BinExp {
+        lhs,
+        op: ast::BinOp::Bxor,
+        rhs,
+    },
+
+    #[precedence(level="9")] #[assoc(side="left")]
+    <lhs:Box<Spanned<Exp>>> "|" <rhs:Box<Spanned<Exp>>> => ast::Exp::BinExp {
+        lhs,
+        op: ast::BinOp::Bor,
+        rhs,
+    },
+
+    #[precedence(level="10")] #[assoc(side="left")]
+    <lhs:Box<Spanned<Exp>>> "==" <rhs:Box<Spanned<Exp>>> => ast::Exp::BinExp {
+        lhs,
+        op: ast::BinOp::Eq,
+        rhs,
+    },
+
+    #[precedence(level="11")] #[assoc(side="left")]
+    <lhs:Box<Spanned<Exp>>> "and" <rhs:Box<Spanned<Exp>>> => ast::Exp::BinExp {
+        lhs,
+        op: ast::BinOp::And,
+        rhs,
+    },
+
+    #[precedence(level="12")] #[assoc(side="left")]
+    <lhs:Box<Spanned<Exp>>> "or" <rhs:Box<Spanned<Exp>>> => ast::Exp::BinExp {
+        lhs,
+        op: ast::BinOp::Or,
+        rhs,
+    },
 }
 
 pub PrefixExp: ast::PrefixExp<'src> = {
-    <x:Spanned<Var>> => ast::PrefixExp::Var(x),
+    <Spanned<Var>> => ast::PrefixExp::Var(<>),
+    <Spanned<FunctionCall>> => ast::PrefixExp::FunctionCall(<>),
 }
 
 pub FunctionCall: ast::FunctionCall<'src> = {
@@ -128,4 +273,14 @@ pub FunctionCall: ast::FunctionCall<'src> = {
 
 pub Args: ast::Args<'src> = {
     "(" <x:List<Exp>> ")" => ast::Args::List(x),
+}
+
+pub FuncBody: ast::FuncBody<'src> = {
+    "(" <params:List<"ident">> ")" <block:Spanned<Block>> "end" => {
+        ast::FuncBody {
+            params,
+            varargs: None,
+            block,
+        }
+    }
 }

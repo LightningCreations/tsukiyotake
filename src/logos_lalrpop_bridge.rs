@@ -2,7 +2,7 @@ use logos::{Logos as _, SpannedIter};
 
 use crate::lex::Token;
 
-pub type LalrpopSpanned<Tok> = Result<(usize, Tok, usize), ()>;
+pub type LalrpopSpanned<Tok> = Result<(usize, Tok, usize), &'static str>;
 
 pub struct Lexer<'src> {
     token_stream: SpannedIter<'src, Token<'src>>,
@@ -22,6 +22,6 @@ impl<'src> Iterator for Lexer<'src> {
     fn next(&mut self) -> Option<Self::Item> {
         self.token_stream
             .next()
-            .map(|(token, span)| Ok((span.start, token?, span.end)))
+            .map(|(token, span)| Ok((span.start, token.map_err(|_| "lexer error")?, span.end)))
     }
 }

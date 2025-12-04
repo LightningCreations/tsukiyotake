@@ -31,8 +31,9 @@ pub enum Stat<'src> {
         cond: Spanned<Exp<'src>>,
     },
     If {
-        branches: Vec<(Spanned<Exp<'src>>, Box<Spanned<Block<'src>>>)>,
-        else_block: Box<Spanned<Block<'src>>>,
+        main: (Spanned<Exp<'src>>, Box<Spanned<Block<'src>>>),
+        elseifs: Vec<(Spanned<Exp<'src>>, Box<Spanned<Block<'src>>>)>,
+        else_block: Option<Box<Spanned<Block<'src>>>>,
     },
     ForNumerical {
         var: Spanned<&'src str>,
@@ -66,8 +67,8 @@ pub struct AttNameList<'src> {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct FuncName<'src> {
-    pub path: Vec<Spanned<&'src str>>,
-    pub method_name: Spanned<&'src str>,
+    pub path: List<&'src str>,
+    pub method: Option<Spanned<&'src str>>,
 }
 
 // Otherwise known as lvalue
@@ -80,7 +81,7 @@ pub enum Var<'src> {
     },
     Path {
         lhs: Box<Spanned<PrefixExp<'src>>>,
-        member: Box<Spanned<&'src str>>,
+        member: Spanned<&'src str>,
     },
 }
 
@@ -98,11 +99,11 @@ pub enum Exp<'src> {
     TableConstructor(List<Field<'src>>),
     BinExp {
         lhs: Box<Spanned<Exp<'src>>>,
-        op: Spanned<BinOp>,
+        op: BinOp,
         rhs: Box<Spanned<Exp<'src>>>,
     },
     UnExp {
-        op: Spanned<UnOp>,
+        op: UnOp,
         rhs: Box<Spanned<Exp<'src>>>,
     },
 }
