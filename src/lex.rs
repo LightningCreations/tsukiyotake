@@ -239,12 +239,13 @@ fn parse_raw_string<'src>(lex: &mut Lexer<'src, Token<'src>>) -> Result<&'src st
 
 #[cfg(test)]
 mod test {
+    use indoc::indoc;
     use logos::Logos;
 
     use crate::lex::Token;
 
     #[test]
-    pub fn hello_world() {
+    fn hello_world() {
         let input = r#"print("Hello World")"#;
         let mut lexer = Token::lexer(input).spanned();
 
@@ -256,5 +257,34 @@ mod test {
         );
         assert_eq!(lexer.next(), Some((Ok(Token::CParen), 19..20)));
         assert_eq!(lexer.next(), None);
+    }
+
+    #[test]
+    fn single_comment() {
+        let input = "-- this is a comment\n";
+        let mut lexer = Token::lexer(input).spanned();
+
+        assert_eq!(lexer.next(), None);
+    }
+
+    #[test]
+    fn factorial() {
+        let input = indoc! {r#"
+            -- defines a factorial function
+            function fact(n)
+                if n == 0 then
+                    return 1
+                else
+                    return n * fact(n-1)
+                end
+            end
+
+            print("enter a number:")
+            a = io.read("*number")
+            print(fact(a))
+        "#};
+        let mut lexer = Token::lexer(input).spanned();
+
+        assert_eq!(lexer.next(), Some((Ok(Token::Function), 32..40)));
     }
 }

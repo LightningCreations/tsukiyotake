@@ -18,6 +18,7 @@ pub mod sync;
 mod grammar_test {
     use crate::{ast::*, grammar::BlockParser, logos_lalrpop_bridge::Lexer};
     use alloc::{boxed::Box, vec};
+    use indoc::indoc;
 
     #[test]
     fn hello_world() {
@@ -52,6 +53,34 @@ mod grammar_test {
                     0..20
                 )],
                 retstat: None,
+            })
+        );
+    }
+
+    #[test]
+    fn factorial() {
+        let input = indoc! {r#"
+            -- defines a factorial function
+            function fact(n)
+                if n == 0 then
+                    return 1
+                else
+                    return n * fact(n-1)
+                end
+            end
+
+            print("enter a number:")
+            a = io.read("*number")
+            print(fact(a))
+        "#};
+        let lexer = Lexer::new(&input);
+        let parser = BlockParser::new();
+        let ast = parser.parse(input, lexer);
+        assert_eq!(
+            ast,
+            Ok(Block {
+                stats: vec![],
+                retstat: None
             })
         );
     }
