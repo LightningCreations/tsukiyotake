@@ -1,7 +1,8 @@
-use logos::{Lexer, Logos, Span};
+use core::fmt;
 
-#[derive(Logos, Debug, PartialEq)]
-#[logos(error(Span, |lex| lex.span()))]
+use logos::{Lexer, Logos};
+
+#[derive(Logos, Debug, Clone, PartialEq)]
 // #[logos(export_dir="diagrams")]
 pub enum Token<'src> {
     #[token("and")]
@@ -133,7 +134,74 @@ pub enum Token<'src> {
     Whitespace,
 }
 
-fn parse_raw_string<'src>(lex: &mut Lexer<'src, Token<'src>>) -> Result<&'src str, Span> {
+impl fmt::Display for Token<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Token::And => write!(f, "and"),
+            Token::Break => write!(f, "break"),
+            Token::Do => write!(f, "do"),
+            Token::Else => write!(f, "else"),
+            Token::ElseIf => write!(f, "elseif"),
+            Token::End => write!(f, "end"),
+            Token::False => write!(f, "false"),
+            Token::For => write!(f, "for"),
+            Token::Function => write!(f, "function"),
+            Token::Goto => write!(f, "goto"),
+            Token::If => write!(f, "if"),
+            Token::In => write!(f, "in"),
+            Token::Local => write!(f, "local"),
+            Token::Nil => write!(f, "nil"),
+            Token::Not => write!(f, "not"),
+            Token::Or => write!(f, "or"),
+            Token::Repeat => write!(f, "repeat"),
+            Token::Return => write!(f, "return"),
+            Token::Then => write!(f, "then"),
+            Token::True => write!(f, "true"),
+            Token::Until => write!(f, "until"),
+            Token::While => write!(f, "while"),
+            Token::Ident(s) => write!(f, "{s}"),
+            Token::Plus => write!(f, "+"),
+            Token::Minus => write!(f, "-"),
+            Token::Star => write!(f, "*"),
+            Token::Slash => write!(f, "/"),
+            Token::Modulo => write!(f, "%"),
+            Token::Hat => write!(f, "^"),
+            Token::Count => write!(f, "#"),
+            Token::BitAnd => write!(f, "&"),
+            Token::BitNot => write!(f, "~"),
+            Token::BitOr => write!(f, "|"),
+            Token::LeftShift => write!(f, "<<"),
+            Token::RightShift => write!(f, ">>"),
+            Token::IntDiv => write!(f, "//"),
+            Token::Equals => write!(f, "=="),
+            Token::NotEquals => write!(f, "~="),
+            Token::LessEquals => write!(f, "<="),
+            Token::GreaterEquals => write!(f, ">="),
+            Token::LeftAngle => write!(f, "<"),
+            Token::RightAngle => write!(f, ">"),
+            Token::Assign => write!(f, "="),
+            Token::OParen => write!(f, "("),
+            Token::CParen => write!(f, ")"),
+            Token::OBrace => write!(f, "{{"),
+            Token::CBrace => write!(f, "}}"),
+            Token::OSquare => write!(f, "["),
+            Token::CSquare => write!(f, "]"),
+            Token::ColonColon => write!(f, "::"),
+            Token::Semi => write!(f, ";"),
+            Token::Colon => write!(f, ":"),
+            Token::Comma => write!(f, ","),
+            Token::Dot => write!(f, "."),
+            Token::DotDot => write!(f, ".."),
+            Token::DotDotDot => write!(f, "..."),
+            Token::Number(s) => write!(f, "{s}"),
+            Token::StringLiteral(s) => write!(f, "{s}"),
+            Token::RawString(s) => write!(f, "{s}"),
+            Token::Whitespace => write!(f, "<whitespace>"),
+        }
+    }
+}
+
+fn parse_raw_string<'src>(lex: &mut Lexer<'src, Token<'src>>) -> Result<&'src str, ()> {
     let n = lex.slice().len().strict_sub(2);
 
     let mut rem = lex.remainder();
@@ -150,7 +218,7 @@ fn parse_raw_string<'src>(lex: &mut Lexer<'src, Token<'src>>) -> Result<&'src st
 
         if b.len() < (n + 2) {
             lex.bump(total_len);
-            return Err(lex.span());
+            return Err(());
         }
 
         for b in b.iter().skip(1).take(n) {
@@ -166,7 +234,7 @@ fn parse_raw_string<'src>(lex: &mut Lexer<'src, Token<'src>>) -> Result<&'src st
     }
 
     lex.bump(total_len + rem.len());
-    Err(lex.span())
+    Err(())
 }
 
 #[cfg(test)]

@@ -1,0 +1,131 @@
+use crate::lex::Token;
+use crate::ast;
+
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::vec::Vec;
+
+grammar<'src>(input: &'src str);
+
+extern {
+    type Location = usize;
+    type Error = ();
+
+    enum Token<'src> {
+        "and" => Token::And, 
+        "break" => Token::Break, 
+        "do" => Token::Do, 
+        "else" => Token::Else, 
+        "elseif" => Token::ElseIf, 
+        "end" => Token::End, 
+        "false" => Token::False, 
+        "for" => Token::For, 
+        "function" => Token::Function, 
+        "goto" => Token::Goto, 
+        "if" => Token::If, 
+        "in" => Token::In, 
+        "local" => Token::Local, 
+        "nil" => Token::Nil, 
+        "not" => Token::Not, 
+        "or" => Token::Or, 
+        "repeat" => Token::Repeat, 
+        "return" => Token::Return, 
+        "then" => Token::Then, 
+        "true" => Token::True, 
+        "until" => Token::Until, 
+        "while" => Token::While, 
+
+        "+" => Token::Plus,
+        "-" => Token::Minus,
+        "*" => Token::Star,
+        "/" => Token::Slash,
+        "%" => Token::Modulo,
+        "^" => Token::Hat,
+        "#" => Token::Count,
+        "&" => Token::BitAnd,
+        "~" => Token::BitNot,
+        "|" => Token::BitOr,
+        "<<" => Token::LeftShift,
+        ">>" => Token::RightShift,
+        "//" => Token::IntDiv,
+        "==" => Token::Equals,
+        "~=" => Token::NotEquals,
+        "<=" => Token::LessEquals,
+        ">=" => Token::GreaterEquals,
+        "<" => Token::LeftAngle,
+        ">" => Token::RightAngle,
+        "=" => Token::Assign,
+        "(" => Token::OParen,
+        ")" => Token::CParen,
+        "{{" => Token::OBrace,
+        "}}" => Token::CBrace,
+        "[" => Token::OSquare,
+        "]" => Token::CSquare,
+        "::" => Token::ColonColon,
+        ";" => Token::Semi,
+        ":" => Token::Colon,
+        "," => Token::Comma,
+        "." => Token::Dot,
+        ".." => Token::DotDot,
+        "..." => Token::DotDotDot,
+
+        "ident" => Token::Ident(<&'src str>),
+        "number" => Token::Number(<&'src str>),
+        "string-literal" => Token::StringLiteral(<&'src str>),
+        "raw-string" => Token::RawString(<&'src str>),
+    }
+}
+
+Box<T>: Box<T> = <t: T> => Box::new(t);
+Spanned<T>: ast::Spanned<T> = <l: @L> <t: T> <r: @R> => (t, l..r);
+List<T>: ast::List<T> = <t: Spanned<UnspannedList<T>>> => t;
+
+UnspannedList<T>: Vec<ast::Spanned<T>> = {
+    <mut v:(<Spanned<T>> ",")*> <e:Spanned<T>?> => match e {
+        None => v,
+        Some(e) => {
+            v.push(e);
+            v
+        }
+    }
+};
+
+String: Box<[u8]> = {
+    <x:"string-literal"> => x.as_bytes().to_owned().into_boxed_slice()
+}
+
+pub Block: ast::Block<'src> = {
+    <stats:Spanned<Stat>*> <retstat:("return" <List<Exp>>)?> => ast::Block { stats, retstat },
+}
+
+pub Stat: ast::Stat<'src> = {
+    ";" => ast::Stat::Empty,
+    <x:Spanned<FunctionCall>> => ast::Stat::FunctionCall(x),
+}
+
+pub Var: ast::Var<'src> = {
+    <name:Spanned<"ident">> => ast::Var::Name(name),
+}
+
+pub Exp: ast::Exp<'src> = {
+    "nil" => ast::Exp::Nil,
+    <x:Spanned<String>> => ast::Exp::LiteralString(x),
+}
+
+pub PrefixExp: ast::PrefixExp<'src> = {
+    <x:Spanned<Var>> => ast::PrefixExp::Var(x),
+}
+
+pub FunctionCall: ast::FunctionCall<'src> = {
+    <lhs:Box<Spanned<PrefixExp>>> <method:(":" <Spanned<"ident">>)?> <args:Spanned<Args>> => {
+        ast::FunctionCall {
+            lhs,
+            method,
+            args
+        }
+    },
+}
+
+pub Args: ast::Args<'src> = {
+    "(" <x:List<Exp>> ")" => ast::Args::List(x),
+}

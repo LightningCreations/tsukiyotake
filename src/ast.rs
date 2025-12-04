@@ -1,14 +1,16 @@
 use alloc::{boxed::Box, vec::Vec};
 use logos::Span;
 
-pub type Spanned<T> = (Span, T);
+pub type Spanned<T> = (T, Span);
 pub type List<T> = Spanned<Vec<Spanned<T>>>;
 
+#[derive(Clone, Debug, PartialEq)]
 pub struct Block<'src> {
-    pub stats: Vec<Stat<'src>>,
+    pub stats: Vec<Spanned<Stat<'src>>>,
     pub retstat: Option<List<Exp<'src>>>,
 }
 
+#[derive(Clone, Debug, PartialEq)]
 pub enum Stat<'src> {
     Empty,
     Assign {
@@ -57,16 +59,19 @@ pub enum Stat<'src> {
     },
 }
 
+#[derive(Clone, Debug, PartialEq)]
 pub struct AttNameList<'src> {
     pub names: Vec<(Spanned<&'src str>, Option<Spanned<&'src str>>)>,
 }
 
+#[derive(Clone, Debug, PartialEq)]
 pub struct FuncName<'src> {
     pub path: Vec<Spanned<&'src str>>,
     pub method_name: Spanned<&'src str>,
 }
 
 // Otherwise known as lvalue
+#[derive(Clone, Debug, PartialEq)]
 pub enum Var<'src> {
     Name(Spanned<&'src str>),
     Index {
@@ -79,13 +84,14 @@ pub enum Var<'src> {
     },
 }
 
+#[derive(Clone, Debug, PartialEq)]
 pub enum Exp<'src> {
     Nil,
     False,
     True,
     NumeralInt(Spanned<i64>),
     NumeralFloat(Spanned<f64>),
-    LiteralString(Spanned<&'src str>),
+    LiteralString(Spanned<Box<[u8]>>),
     VarArg,
     FunctionDef(Spanned<FuncBody<'src>>),
     PrefixExp(Spanned<PrefixExp<'src>>),
@@ -101,30 +107,35 @@ pub enum Exp<'src> {
     },
 }
 
+#[derive(Clone, Debug, PartialEq)]
 pub enum PrefixExp<'src> {
     Var(Spanned<Var<'src>>),
     FunctionCall(Spanned<FunctionCall<'src>>),
     Parens(Box<Spanned<Exp<'src>>>),
 }
 
+#[derive(Clone, Debug, PartialEq)]
 pub struct FunctionCall<'src> {
     pub lhs: Box<Spanned<PrefixExp<'src>>>,
     pub method: Option<Spanned<&'src str>>,
     pub args: Spanned<Args<'src>>,
 }
 
+#[derive(Clone, Debug, PartialEq)]
 pub enum Args<'src> {
     List(List<Exp<'src>>),
     TableConstructor(List<Field<'src>>),
-    String(&'src str),
+    String(Spanned<Box<[u8]>>),
 }
 
+#[derive(Clone, Debug, PartialEq)]
 pub struct FuncBody<'src> {
     pub params: List<&'src str>,
     pub varargs: Option<Spanned<()>>,
     pub block: Spanned<Block<'src>>,
 }
 
+#[derive(Clone, Debug, PartialEq)]
 pub enum Field<'src> {
     Exp {
         field: Box<Spanned<Exp<'src>>>,
@@ -151,6 +162,7 @@ impl<'src> Field<'src> {
 }
 
 // most names are based on the related metatable function
+#[derive(Clone, Debug, PartialEq)]
 pub enum BinOp {
     Add,
     Sub,
@@ -176,6 +188,7 @@ pub enum BinOp {
 }
 
 // most names are based on the related metatable function
+#[derive(Clone, Debug, PartialEq)]
 pub enum UnOp {
     Unm,
     Not, // keyword/boolean
