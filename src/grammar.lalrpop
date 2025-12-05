@@ -116,7 +116,7 @@ String: Box<[u8]> = {
 }
 
 pub Block: ast::Block<'src> = {
-    <stats:Spanned<Stat>*> <retstat:("return" <List<Exp>>)?> => ast::Block { stats, retstat },
+    <stats:Spanned<Stat>*> <retstat:("return" <List<Exp>> ";"?)?> => ast::Block { stats, retstat },
 }
 
 pub Stat: ast::Stat<'src> = {
