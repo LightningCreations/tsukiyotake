@@ -27,7 +27,7 @@ pub enum Stat<'src> {
         block: Box<Spanned<Block<'src>>>,
     },
     RepeatUntil {
-        block: Box<Block<'src>>,
+        block: Box<Spanned<Block<'src>>>,
         cond: Spanned<Exp<'src>>,
     },
     If {
@@ -40,6 +40,7 @@ pub enum Stat<'src> {
         initial: Spanned<Exp<'src>>,
         limit: Spanned<Exp<'src>>,
         step: Option<Spanned<Exp<'src>>>,
+        block: Box<Spanned<Block<'src>>>,
     },
     ForGeneric {
         names: List<&'src str>,
@@ -55,14 +56,15 @@ pub enum Stat<'src> {
         body: Spanned<FuncBody<'src>>,
     },
     Local {
-        names: Spanned<AttNameList<'src>>,
+        names: List<AttName<'src>>,
         exps: Option<List<Exp<'src>>>,
     },
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct AttNameList<'src> {
-    pub names: Vec<(Spanned<&'src str>, Option<Spanned<&'src str>>)>,
+pub struct AttName<'src> {
+    pub name: Spanned<&'src str>,
+    pub attrib: Option<Spanned<&'src str>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]

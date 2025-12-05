@@ -60,8 +60,8 @@ extern {
         "=" => Token::Assign,
         "(" => Token::OParen,
         ")" => Token::CParen,
-        "{{" => Token::OBrace,
-        "}}" => Token::CBrace,
+        "{" => Token::OBrace,
+        "}" => Token::CBrace,
         "[" => Token::OSquare,
         "]" => Token::CSquare,
         "::" => Token::ColonColon,
@@ -83,13 +83,14 @@ Box<T>: Box<T> = <t: T> => Box::new(t);
 Spanned<T>: ast::Spanned<T> = <l: @L> <t: T> <r: @R> => (t, l..r);
 List<T>: ast::List<T> = <t: Spanned<UnspannedList<T>>> => t;
 DotList<T>: ast::List<T> = <t: Spanned<UnspannedDotList<T>>> => t;
+FieldList: ast::List<ast::Field<'src>> = <t: Spanned<UnspannedFieldList>> => t;
 
 UnspannedList<T>: Vec<ast::Spanned<T>> = {
     <t:Spanned<T>> => vec![t],
     <mut l:UnspannedList<T>> "," <t:Spanned<T>> => {
         l.push(t);
         l
-    }
+    },
 };
 
 UnspannedDotList<T>: Vec<ast::Spanned<T>> = {
@@ -97,11 +98,21 @@ UnspannedDotList<T>: Vec<ast::Spanned<T>> = {
     <mut l:UnspannedDotList<T>> "." <t:Spanned<T>> => {
         l.push(t);
         l
+    },
+};
+
+UnspannedFieldList: Vec<ast::Spanned<ast::Field<'src>>> = {
+    <mut v:(<Spanned<Field>> ",")*> <e:Spanned<Field>?> => match e {
+        None => v,
+        Some(e) => {
+            v.push(e);
+            v
+        }
     }
 };
 
 String: Box<[u8]> = {
-    <x:"string-literal"> => x.as_bytes().to_owned().into_boxed_slice()
+    <x:"string-literal"> => x.as_bytes().to_owned().into_boxed_slice(),
 }
 
 pub Block: ast::Block<'src> = {
@@ -111,12 +122,34 @@ pub Block: ast::Block<'src> = {
 pub Stat: ast::Stat<'src> = {
     ";" => ast::Stat::Empty,
     <vars:List<Var>> "=" <exps:List<Exp>> => ast::Stat::Assign { vars, exps },
-    <x:Spanned<FunctionCall>> => ast::Stat::FunctionCall(x),
+    <Spanned<FunctionCall>> => ast::Stat::FunctionCall(<>),
+    "::" <Spanned<"ident">> "::" => ast::Stat::Label(<>),
+    "break" => ast::Stat::Break,
+    "goto" <Spanned<"ident">> => ast::Stat::Goto(<>),
+    "do" <Box<Spanned<Block>>> "end" => ast::Stat::DoBlock(<>),
+    "while" <cond:Spanned<Exp>> "do" <block:Box<Spanned<Block>>> "end" => ast::Stat::While { cond, block },
+    "repeat" <block:Box<Spanned<Block>>> "until" <cond:Spanned<Exp>> "end" => ast::Stat::RepeatUntil { block, cond },
     "if" <main:CondThenBlock> <elseifs:("elseif" <CondThenBlock>)*> <else_block:("else" <Box<Spanned<Block>>>)?> "end" => {
         ast::Stat::If {
             main,
             elseifs,
             else_block,
+        }
+    },
+    "for" <var:Spanned<"ident">> "=" <initial:Spanned<Exp>> "," <limit:Spanned<Exp>> <step:("," <Spanned<Exp>>)?> "do" <block:Box<Spanned<Block>>> "end" => {
+        ast::Stat::ForNumerical {
+            var,
+            initial,
+            limit,
+            step,
+            block,
+        }
+    },
+    "for" <names:List<"ident">> "in" <exps:List<Exp>> "do" <block:Box<Spanned<Block>>> "end" => {
+        ast::Stat::ForGeneric {
+            names,
+            exps,
+            block,
         }
     },
     "function" <name:Spanned<FuncName>> <body:Spanned<FuncBody>> => {
@@ -125,18 +158,40 @@ pub Stat: ast::Stat<'src> = {
             body,
         }
     },
+    "local" "function" <name:Spanned<"ident">> <body:Spanned<FuncBody>> => {
+        ast::Stat::LocalFunction {
+            name,
+            body,
+        }
+    },
+    "local" <names:List<AttName>> <exps:("=" <List<Exp>>)?> => {
+        ast::Stat::Local {
+            names,
+            exps,
+        }
+    },
+}
+
+AttName: ast::AttName<'src> = {
+    <name:Spanned<"ident">> <attrib:("<" <Spanned<"ident">> ">")?> => ast::AttName { name, attrib },
 }
 
 CondThenBlock: (ast::Spanned<ast::Exp<'src>>, Box<ast::Spanned<ast::Block<'src>>>) = {
-    <Spanned<Exp>> "then" <Box<Spanned<Block>>> => (<>)
+    <Spanned<Exp>> "then" <Box<Spanned<Block>>> => (<>),
 }
 
 pub FuncName: ast::FuncName<'src> = {
-    <path:DotList<"ident">> => ast::FuncName { path, method: None }
+    <path:DotList<"ident">> <method:(":" <Spanned<"ident">>)?> => ast::FuncName { path, method },
 }
 
 pub Var: ast::Var<'src> = {
     <name:Spanned<"ident">> => ast::Var::Name(name),
+    <lhs:Box<Spanned<PrefixExp>>> "[" <idx:Box<Spanned<Exp>>> "]" => {
+        ast::Var::Index {
+            lhs,
+            idx,
+        }
+    },
     <lhs:Box<Spanned<PrefixExp>>> "." <member:Spanned<"ident">> => {
         ast::Var::Path {
             lhs,
@@ -148,6 +203,8 @@ pub Var: ast::Var<'src> = {
 pub Exp: ast::Exp<'src> = {
     #[precedence(level="0")]
     "nil" => ast::Exp::Nil,
+    "false" => ast::Exp::False,
+    "true" => ast::Exp::True,
     <Spanned<"number">> =>? {
         if let Ok(x) = i64::from_str(<>.0) {
             Ok(ast::Exp::NumeralInt((x, <>.1)))
@@ -160,7 +217,10 @@ pub Exp: ast::Exp<'src> = {
         }
     },
     <Spanned<String>> => ast::Exp::LiteralString(<>),
+    "..." => ast::Exp::VarArg,
+    "function" <Spanned<FuncBody>> => ast::Exp::FunctionDef(<>),
     <Spanned<PrefixExp>> => ast::Exp::PrefixExp(<>),
+    "{" <FieldList> "}" => ast::Exp::TableConstructor(<>),
 
     #[precedence(level="1")] #[assoc(side="right")]
     <lhs:Box<Spanned<Exp>>> "^" <rhs:Box<Spanned<Exp>>> => ast::Exp::BinExp {
@@ -170,8 +230,20 @@ pub Exp: ast::Exp<'src> = {
     },
 
     #[precedence(level="2")]
+    "not" <rhs:Box<Spanned<Exp>>> => ast::Exp::UnExp {
+        op: ast::UnOp::Not,
+        rhs,
+    },
+    "#" <rhs:Box<Spanned<Exp>>> => ast::Exp::UnExp {
+        op: ast::UnOp::Len,
+        rhs,
+    },
     "-" <rhs:Box<Spanned<Exp>>> => ast::Exp::UnExp {
         op: ast::UnOp::Unm,
+        rhs,
+    },
+    "~" <rhs:Box<Spanned<Exp>>> => ast::Exp::UnExp {
+        op: ast::UnOp::Bnot,
         rhs,
     },
 
@@ -179,6 +251,21 @@ pub Exp: ast::Exp<'src> = {
     <lhs:Box<Spanned<Exp>>> "*" <rhs:Box<Spanned<Exp>>> => ast::Exp::BinExp {
         lhs,
         op: ast::BinOp::Mul,
+        rhs,
+    },
+    <lhs:Box<Spanned<Exp>>> "/" <rhs:Box<Spanned<Exp>>> => ast::Exp::BinExp {
+        lhs,
+        op: ast::BinOp::Div,
+        rhs,
+    },
+    <lhs:Box<Spanned<Exp>>> "//" <rhs:Box<Spanned<Exp>>> => ast::Exp::BinExp {
+        lhs,
+        op: ast::BinOp::Idiv,
+        rhs,
+    },
+    <lhs:Box<Spanned<Exp>>> "%" <rhs:Box<Spanned<Exp>>> => ast::Exp::BinExp {
+        lhs,
+        op: ast::BinOp::Mod,
         rhs,
     },
 
@@ -216,7 +303,7 @@ pub Exp: ast::Exp<'src> = {
     #[precedence(level="7")] #[assoc(side="left")]
     <lhs:Box<Spanned<Exp>>> "&" <rhs:Box<Spanned<Exp>>> => ast::Exp::BinExp {
         lhs,
-        op: ast::BinOp::Bxor,
+        op: ast::BinOp::Band,
         rhs,
     },
 
@@ -235,6 +322,31 @@ pub Exp: ast::Exp<'src> = {
     },
 
     #[precedence(level="10")] #[assoc(side="left")]
+    <lhs:Box<Spanned<Exp>>> "<" <rhs:Box<Spanned<Exp>>> => ast::Exp::BinExp {
+        lhs,
+        op: ast::BinOp::Lt,
+        rhs,
+    },
+    <lhs:Box<Spanned<Exp>>> ">" <rhs:Box<Spanned<Exp>>> => ast::Exp::BinExp {
+        lhs,
+        op: ast::BinOp::Gt,
+        rhs,
+    },
+    <lhs:Box<Spanned<Exp>>> "<=" <rhs:Box<Spanned<Exp>>> => ast::Exp::BinExp {
+        lhs,
+        op: ast::BinOp::Le,
+        rhs,
+    },
+    <lhs:Box<Spanned<Exp>>> ">=" <rhs:Box<Spanned<Exp>>> => ast::Exp::BinExp {
+        lhs,
+        op: ast::BinOp::Ge,
+        rhs,
+    },
+    <lhs:Box<Spanned<Exp>>> "~=" <rhs:Box<Spanned<Exp>>> => ast::Exp::BinExp {
+        lhs,
+        op: ast::BinOp::Neq,
+        rhs,
+    },
     <lhs:Box<Spanned<Exp>>> "==" <rhs:Box<Spanned<Exp>>> => ast::Exp::BinExp {
         lhs,
         op: ast::BinOp::Eq,
@@ -282,5 +394,25 @@ pub FuncBody: ast::FuncBody<'src> = {
             varargs: None,
             block,
         }
-    }
+    },
+}
+
+pub Field: ast::Field<'src> = {
+    "[" <field:Box<Spanned<Exp>>> "]" "=" <val:Box<Spanned<Exp>>> => {
+        ast::Field::Exp {
+            field,
+            val,
+        }
+    },
+    <field:Spanned<"ident">> "=" <val:Box<Spanned<Exp>>> => {
+        ast::Field::Named {
+            field,
+            val,
+        }
+    },
+    <val:Box<Spanned<Exp>>> => {
+        ast::Field::Unnamed {
+            val,
+        }
+    },
 }
