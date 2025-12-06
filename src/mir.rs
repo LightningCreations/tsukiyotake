@@ -78,7 +78,7 @@ impl Multival {
             Multival::FixedList(exprs) => exprs.len().try_into().unwrap(),
             Multival::Var { var, count } => count.unwrap_or(0),
             Multival::Concat(multivals) => multivals.iter().map(Multival::min_size).sum(),
-            Multival::ClampSize { base, min, .. } => base.min_size().max(min),
+            Multival::ClampSize { base, min, .. } => base.min_size().max(*min),
             Multival::Subslice {
                 base,
                 start: n,
@@ -174,6 +174,11 @@ pub enum Statement {
     ///
     /// Accessing the same upvar from the same closure (whether or not during the same execution) following this statement, is undefined behaviour.
     MarkDead(SsaVarId),
+    WriteIndex {
+        table: Expr,
+        index: Index,
+        value: Expr,
+    },
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
