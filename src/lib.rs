@@ -5,6 +5,9 @@ use lalrpop_util::lalrpop_mod;
 
 extern crate alloc;
 
+#[macro_use]
+mod macros;
+
 pub mod ast;
 pub mod lex;
 pub mod logos_lalrpop_bridge;

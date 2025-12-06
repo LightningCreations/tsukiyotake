@@ -1,4 +1,5 @@
 use core::alloc::Layout;
+use core::cell::UnsafeCell;
 use core::marker::PhantomData;
 use core::mem::MaybeUninit;
 
@@ -184,7 +185,9 @@ impl<'ctx> Value<'ctx> {
         }
     }
 
-    pub const fn unpack(&self) -> UnpackedValue<'ctx> {}
+    pub const fn unpack(&self) -> UnpackedValue<'ctx> {
+        todo!()
+    }
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -193,7 +196,6 @@ pub enum UnpackedValue<'ctx> {
     Bool(bool),
     Float(f64),
     String(&'ctx [u8]),
-    UnmanagedUserdata(Arc<dyn Userdata<'ctx>>),
     Managed(ArenaPtr<'ctx>),
 }
 
