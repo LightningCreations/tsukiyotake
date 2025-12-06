@@ -9,9 +9,57 @@ use alloc::boxed::Box;
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub struct Brand<'ctx>(PhantomData<&'ctx mut &'ctx mut ()>);
 
-#[repr(align(8))]
+impl<'ctx> Brand<'ctx> {
+    const fn new_unchecked() -> Self {
+        Self(PhantomData)
+    }
+}
+
+#[derive(Copy, Clone)]
+#[repr(C)]
+struct ValuePtr {
+    ptr: *mut (),
+    __pad: [usize; (size_of::<u64>() / size_of::<usize>()) - 1],
+    meta: u64,
+}
+
+unsafe impl Send for ValuePtr {}
+unsafe impl Sync for ValuePtr {}
+
 #[derive(Copy, Clone, Hash, PartialEq, Eq)]
-pub struct Value<'ctx>(u64, Brand<'ctx>);
+#[repr(C)]
+struct ValueInt {
+    int: u64,
+    meta: u64,
+}
+
+#[derive(Copy, Clone)]
+#[repr(C, align(16))]
+union ValueInner {
+    wide_ptr: ValuePtr,
+    int: ValueInt,
+}
+
+impl core::hash::Hash for ValueInner {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        unsafe { self.int.hash(state) }
+    }
+}
+
+impl core::cmp::PartialEq for ValueInner {
+    fn eq(&self, other: &Self) -> bool {
+        unsafe { self.int == other.int }
+    }
+}
+
+impl core::cmp::Eq for ValueInner {}
+
+const TYPE_INT: u64 = 0x8000_0000_0000_0000;
+const TYPE_FLOAT: u64 = 0x9000_0000_0000_0000;
+const TYPE_BOOL: u64 = 0xA000_0000_0000_0000;
+const TYPE_UNMANAGED_UDATA: u64 = 0xB000_0000_0000_0000;
+
+const TYPE_MANAGED: u64 = 0xF000_0000_0000_0000;
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub enum Type {
@@ -19,6 +67,7 @@ pub enum Type {
     Boolean,
     Int,
     Float,
+    UnmanagedString,
 }
 
 macro_rules! TryFromInt {
@@ -40,81 +89,102 @@ macro_rules! TryFromInt {
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq, TryFromInt)]
 pub enum ManagedType {
     Table = 1,
-    StaticString,
-    ManagedString,
+    ManagedString = 3,
     Coroutine,
     ManagedUserdata,
-    UnmanagedUserdata,
-    Dangling,
+    Dangling = 7,
 
-    FinalizedUnmanagedUserdata = 0xA,
-    FinalizedManagedUserdata = 0xB,
-    FinalizedCoroutine = 0xC,
+    FinalizedManagedUserdata = 0xA,
+    FinalizedCoroutine = 0xB,
     FinalizedTable = 0xE,
     Dead = 0xF,
 }
 
-impl ManagedType {
-    const MAX_VALUE: u64 = ManagedType::UnmanagedUserdata as u64;
-}
-
-const NAN: u64 = 0x7FF0_0000_0000_0001;
-
-const NIL: u64 = 0x7FF7_0000_0000_0000;
+#[repr(transparent)]
+#[derive(Copy, Clone, Hash, PartialEq, Eq)]
+pub struct Value<'ctx>(ValueInner, Brand<'ctx>);
 
 impl<'ctx> Value<'ctx> {
-    pub const fn new_int(x: i32) -> Value<'ctx> {
-        Value(0x7FFF_0000_0000_0000 | x as u32 as u64, Brand(PhantomData))
+    const fn new_unchecked(x: ValueInner) -> Self {
+        Self(x, Brand::new_unchecked())
+    }
+    pub const fn nil() -> Self {
+        Self::new_unchecked(ValueInner {
+            wide_ptr: ValuePtr {
+                ptr: core::ptr::null_mut(),
+                __pad: bytemuck::zeroed(),
+                meta: TYPE_MANAGED | (ManagedType::Dangling as u64) << 56,
+            },
+        })
     }
 
-    pub const fn new_float(x: f64) -> Value<'ctx> {
-        if x.is_nan() {
-            Value(NAN, Brand(PhantomData))
+    pub const fn new_int(x: i64) -> Self {
+        Self::new_unchecked(ValueInner {
+            int: ValueInt {
+                int: x as u64,
+                meta: TYPE_INT,
+            },
+        })
+    }
+
+    pub const fn new_float(x: f64) -> Self {
+        Self::new_unchecked(ValueInner {
+            int: ValueInt {
+                int: x as u64,
+                meta: TYPE_INT,
+            },
+        })
+    }
+
+    pub const fn new_bool(x: bool) -> Self {
+        Self::new_unchecked(ValueInner {
+            int: ValueInt {
+                int: x as u64,
+                meta: TYPE_BOOL,
+            },
+        })
+    }
+
+    pub const fn string_literal(x: &'static [u8]) -> Self {
+        #[cfg(target_pointer_width = "64")]
+        assert!(x.len() < 0x4000_0000_0000_0000);
+        let ptr = x.as_ptr();
+        let len = x.len();
+
+        Self::new_unchecked(ValueInner {
+            wide_ptr: ValuePtr {
+                ptr: ptr.cast_mut().cast(),
+                __pad: bytemuck::zeroed(),
+                meta: len as u64,
+            },
+        })
+    }
+
+    pub const fn managed_size(&self) -> Option<usize> {
+        let meta = unsafe { self.0.wide_ptr.meta };
+        if (meta & 0xF000_0000_0000_0000) == 0xF000_0000_0000_0000 {
+            Some(meta as u32 as usize)
+        } else if meta < 0x8000_0000_0000_0000 {
+            Some((meta & 0x3FFF_FFFF_FFFF_FFFF) as usize)
         } else {
-            Value(x.to_bits(), Brand(PhantomData))
+            None
         }
-    }
-
-    pub const fn nil() -> Value<'ctx> {
-        Value(NIL, Brand(PhantomData))
-    }
-
-    pub const fn new_bool(x: bool) -> Value<'ctx> {
-        Value(0x7FFE_0000_0000_0000 | x as u64, Brand(PhantomData))
     }
 
     pub const fn type_of(&self) -> Type {
-        match self.0 >> 48 {
-            0x7FFF => Type::Int,
-            0x7FFE => Type::Boolean,
-            0xFFF1..=0xFFFF | 0x7FF1..=0x7FFD => {
-                let x = (self.0 >> 48) & 0xF;
+        let meta = unsafe { self.0.wide_ptr.meta };
 
-                Type::Managed(ManagedType::from_int(x as usize))
-            }
-            _ => Type::Float,
+        match meta >> 60 {
+            0..8 => Type::UnmanagedString,
+            8 => Type::Int,
+            9 => Type::Float,
+            10 => Type::Boolean,
+            15 => Type::Managed(ManagedType::from_int((meta >> 56) as usize & 0xF)),
+            _ => panic!("Invalid type encoded in raw representation"),
         }
     }
 
-    pub const fn is_gc_marked(&self) -> bool {
-        self.0 >> 63 == 1
-    }
-
-    pub const fn raw(&self) -> u64 {
-        self.0
-    }
-
-    pub const fn unpack(&self) -> UnpackedValue<'ctx> {
-        match self.type_of() {
-            Type::Int => UnpackedValue::Int(self.0 as u32 as i32),
-            Type::Boolean => UnpackedValue::Bool(self.0 & 0x0000_0000_0000 != 0),
-            Type::Float => UnpackedValue::Float(f64::from_bits(self.0)),
-            Type::Managed(m) => UnpackedValue::Managed(ArenaPtr(
-                ((self.0 & 0xFFFF_FFFF_FFFF) as usize) << 5 | (m as usize),
-                self.1,
-            )),
-        }
-    }
+    pub const fn unpack(&self) -> UnpackedValue<'ctx> {}
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -122,6 +192,8 @@ pub enum UnpackedValue<'ctx> {
     Int(i32),
     Bool(bool),
     Float(f64),
+    String(&'ctx [u8]),
+    UnmanagedUserdata(Arc<dyn Userdata<'ctx>>),
     Managed(ArenaPtr<'ctx>),
 }
 
@@ -135,7 +207,10 @@ impl<'ctx> ArenaPtr<'ctx> {
 }
 
 #[repr(C, align(32))]
-struct ValueBlock(MaybeUninit<[u8; 32]>);
+struct ValueBlock(UnsafeCell<MaybeUninit<[u8; 32]>>);
+
+unsafe impl Send for ValueBlock {}
+unsafe impl Sync for ValueBlock {}
 
 struct ArenaInner<'ctx> {
     // Starts with the allocation Metadata, The rest is the Memory region
@@ -150,3 +225,5 @@ struct AllocMetadata {
 }
 
 pub struct Arena<'ctx>(RwLock<ArenaInner<'ctx>>);
+
+impl<'ctx> Arena<'ctx> {}

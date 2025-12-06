@@ -16,3 +16,4 @@ pub mod sync;
 
 #[cfg(test)]
 mod grammar_test;
+pub mod mir;
