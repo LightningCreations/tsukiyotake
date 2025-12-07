@@ -1,23 +1,17 @@
+[workspace]
+members = ["grammar"]
+package.version = "0.1.0"
+package.edition = "2024"
+
 [package]
-name = "tuskiyotake"
+name = "tsukiyotake"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
 bytemuck = { version = "1.24.0", features = ["latest_stable_rust"] }
-lalrpop-util = "0.22.2"
 lock_api = { version = "0.4.14", default-features = false }
-logos = { version = "0.15.1", default-features = false, features = [
-    "export_derive",
-    "logos-derive",
-    # "debug",
-] }
+tsukiyotake-grammar = { path = "grammar" }
 
 [features]
-std = ["logos/std"]
-
-[build-dependencies]
-lalrpop = "0.22.2"
-
-[dev-dependencies]
-indoc = "2.0.7"
+std = ["tsukiyotake-grammar/std"]

@@ -1,7 +1,26 @@
 use alloc::{boxed::Box, vec::Vec};
 use logos::Span;
 
-pub type Spanned<T> = (T, Span);
+#[derive(Clone, Debug, PartialEq)]
+pub struct Spanned<T>(pub T, pub Span);
+
+#[macro_export]
+macro_rules! s {
+    ($x:expr, $y:expr $(,)?) => {
+        $crate::ast::Spanned($x, $y)
+    };
+}
+
+impl<T> Spanned<T> {
+    pub fn map<U>(self, f: impl FnOnce(T) -> U) -> Spanned<U> {
+        Spanned(f(self.0), self.1)
+    }
+
+    pub fn try_map<E, U>(self, f: impl FnOnce(T) -> Result<U, E>) -> Result<Spanned<U>, E> {
+        Ok(Spanned(f(self.0)?, self.1))
+    }
+}
+
 pub type List<T> = Spanned<Vec<Spanned<T>>>;
 
 #[derive(Clone, Debug, PartialEq)]

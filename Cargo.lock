@@ -503,14 +503,21 @@ dependencies = [
 ]
 
 [[package]]
-name = "tuskiyotake"
+name = "tsukiyotake"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
+ "lock_api",
+ "tsukiyotake-grammar",
+]
+
+[[package]]
+name = "tsukiyotake-grammar"
+version = "0.1.0"
+dependencies = [
  "indoc",
  "lalrpop",
  "lalrpop-util",
- "lock_api",
  "logos",
 ]
 

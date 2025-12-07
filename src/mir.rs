@@ -1,5 +1,7 @@
 use core::num::NonZeroU32;
 
+use alloc::{boxed::Box, string::String, vec::Vec};
+
 use crate::ast::{BinOp, UnOp};
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]

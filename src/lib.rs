@@ -1,22 +1,16 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 #![feature(macro_derive)]
 
-use lalrpop_util::lalrpop_mod;
-
 extern crate alloc;
 
 #[macro_use]
 mod macros;
 
-pub mod ast;
-pub mod lex;
-pub mod logos_lalrpop_bridge;
+pub mod hir;
 
-lalrpop_mod!(grammar);
+pub use tsukiyotake_grammar::{ast, grammar, lex, logos_lalrpop_bridge};
 
 pub mod engine;
 pub mod sync;
 
-#[cfg(test)]
-mod grammar_test;
 pub mod mir;

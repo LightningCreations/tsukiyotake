@@ -1,5 +1,6 @@
 use core::alloc::Layout;
 use core::cell::UnsafeCell;
+use core::hash::{Hash, Hasher};
 use core::marker::PhantomData;
 use core::mem::MaybeUninit;
 
@@ -41,19 +42,19 @@ union ValueInner {
     int: ValueInt,
 }
 
-impl core::hash::Hash for ValueInner {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+impl Hash for ValueInner {
+    fn hash<H: Hasher>(&self, state: &mut H) {
         unsafe { self.int.hash(state) }
     }
 }
 
-impl core::cmp::PartialEq for ValueInner {
+impl PartialEq for ValueInner {
     fn eq(&self, other: &Self) -> bool {
         unsafe { self.int == other.int }
     }
 }
 
-impl core::cmp::Eq for ValueInner {}
+impl Eq for ValueInner {}
 
 const TYPE_INT: u64 = 0x8000_0000_0000_0000;
 const TYPE_FLOAT: u64 = 0x9000_0000_0000_0000;

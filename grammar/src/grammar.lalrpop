@@ -80,7 +80,7 @@ extern {
 }
 
 Box<T>: Box<T> = <t: T> => Box::new(t);
-Spanned<T>: ast::Spanned<T> = <l: @L> <t: T> <r: @R> => (t, l..r);
+Spanned<T>: ast::Spanned<T> = <l: @L> <t: T> <r: @R> => ast::Spanned(t, l..r);
 List<T>: ast::List<T> = <t: Spanned<UnspannedList<T>>> => t;
 DotList<T>: ast::List<T> = <t: Spanned<UnspannedDotList<T>>> => t;
 FieldList: ast::List<ast::Field<'src>> = <t: Spanned<UnspannedFieldList>> => t;
@@ -207,9 +207,9 @@ pub Exp: ast::Exp<'src> = {
     "true" => ast::Exp::True,
     <Spanned<"number">> =>? {
         if let Ok(x) = i64::from_str(<>.0) {
-            Ok(ast::Exp::NumeralInt((x, <>.1)))
+            Ok(ast::Exp::NumeralInt(ast::Spanned(x, <>.1)))
         } else if let Ok(x) = f64::from_str(<>.0) {
-            Ok(ast::Exp::NumeralFloat((x, <>.1))) // TODO: Proper float parsing
+            Ok(ast::Exp::NumeralFloat(ast::Spanned(x, <>.1))) // TODO: Proper float parsing
         } else {
             Err(ParseError::User {
                 error: "number is too big"
