@@ -181,6 +181,9 @@ pub enum Statement {
         index: Index,
         value: Expr,
     },
+    /// Invokes (with a discarded result), close metamethods for each provided variable.
+    /// If more than one variable is provided, they are closed in the reverse order they are listed.
+    Close(Vec<SsaVarId>),
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
