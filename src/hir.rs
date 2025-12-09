@@ -13,6 +13,7 @@ pub use crate::ast::{BinOp, FuncName, List, Spanned, UnOp};
 #[derive(Clone, Debug, PartialEq)]
 pub struct Block<'src> {
     pub locals: HashSet<String>,
+    pub import_locals: HashSet<String>,
     pub stats: Vec<Spanned<Stat<'src>>>,
     pub retstat: Option<List<Exp<'src>>>,
 }
@@ -152,6 +153,7 @@ impl HirConversionContext {
         });
         Block {
             locals: self.locals,
+            import_locals: self.import_locals,
             stats,
             retstat,
         }
@@ -307,6 +309,7 @@ impl HirConversionContext {
     fn in_scope(&mut self, var: &str) -> bool {
         var == "_ENV"
             || self.locals.contains(var)
+            || self.import_locals.contains(var)
             || if self.parent_locals.contains(var) {
                 // side effects in a conditional? scandalous
                 self.import_locals.insert(var.to_owned());
@@ -386,16 +389,16 @@ mod test {
             hir,
             Block {
                 locals: HashSet::new(),
+                import_locals: HashSet::new(),
                 stats: vec![s!(
                     Stat::FunctionCall(s!(
                         FunctionCall {
                             lhs: Box::new(s!(
                                 Exp::Var(s!(
                                     Var::Path {
-                                        lhs: Box::new(s!(
-                                            Exp::Var(s!(Var::Name(synth!("_ENV".into())), 0..0)),
-                                            0..0,
-                                        )),
+                                        lhs: Box::new(synth!(Exp::Var(synth!(Var::Name(synth!(
+                                            "_ENV".into()
+                                        )))))),
                                         field: s!("print", 0..5)
                                     },
                                     0..5,
