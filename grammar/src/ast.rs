@@ -1,6 +1,7 @@
 use alloc::{boxed::Box, vec::Vec};
 use logos::Span;
 
+// TODO: redo this so it is Copy
 #[derive(Clone, Debug, PartialEq)]
 pub struct Spanned<T>(pub T, pub Span);
 
@@ -11,13 +12,37 @@ macro_rules! s {
     };
 }
 
+#[macro_export]
+macro_rules! synth {
+    ($x:expr $(,)?) => {
+        $crate::ast::Spanned::synth($x)
+    };
+}
+
 impl<T> Spanned<T> {
+    pub fn as_ref(&self) -> Spanned<&T> {
+        Spanned(&self.0, self.1.clone()) // practically free clone
+    }
+
     pub fn map<U>(self, f: impl FnOnce(T) -> U) -> Spanned<U> {
         Spanned(f(self.0), self.1)
     }
 
     pub fn try_map<E, U>(self, f: impl FnOnce(T) -> Result<U, E>) -> Result<Spanned<U>, E> {
         Ok(Spanned(f(self.0)?, self.1))
+    }
+
+    pub fn synth(inner: T) -> Self {
+        Self(inner, 0..0)
+    }
+}
+
+impl<T> Spanned<Option<T>> {
+    pub fn transpose(self) -> Option<Spanned<T>> {
+        match self.0 {
+            None => None,
+            Some(x) => Some(Spanned(x, self.1))
+        }
     }
 }
 

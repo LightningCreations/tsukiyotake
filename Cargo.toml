@@ -10,6 +10,7 @@ edition = "2024"
 
 [dependencies]
 bytemuck = { version = "1.24.0", features = ["latest_stable_rust"] }
+hashbrown = "0.16.1"
 lock_api = { version = "0.4.14", default-features = false }
 tsukiyotake-grammar = { path = "grammar" }
 
