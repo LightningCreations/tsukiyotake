@@ -245,6 +245,31 @@ mod test {
 
     use crate::lex::Token;
 
+    mod units {
+        use logos::Logos;
+
+        use crate::lex::Token;
+
+        #[test]
+        fn strings_in_strings() {
+            let input = r#""this is a 'test'""#;
+            let mut lexer = Token::lexer(input).spanned();
+            assert_eq!(lexer.next(), Some((Ok(Token::StringLiteral(r#""this is a 'test'""#)), 0..18)));
+
+            let input = r#"'this is a "test"'"#;
+            let mut lexer = Token::lexer(input).spanned();
+            assert_eq!(lexer.next(), Some((Ok(Token::StringLiteral(r#"'this is a "test"'"#)), 0..18)));
+        }
+
+        #[test]
+        fn single_comment() {
+            let input = "-- this is a comment\n";
+            let mut lexer = Token::lexer(input).spanned();
+
+            assert_eq!(lexer.next(), None);
+        }
+    }
+
     #[test]
     fn hello_world() {
         let input = r#"print("Hello World")"#;
@@ -257,14 +282,6 @@ mod test {
             Some((Ok(Token::StringLiteral(r#""Hello World""#)), 6..19)),
         );
         assert_eq!(lexer.next(), Some((Ok(Token::CParen), 19..20)));
-        assert_eq!(lexer.next(), None);
-    }
-
-    #[test]
-    fn single_comment() {
-        let input = "-- this is a comment\n";
-        let mut lexer = Token::lexer(input).spanned();
-
         assert_eq!(lexer.next(), None);
     }
 
