@@ -1,5 +1,7 @@
+use alloc::collections::BTreeMap;
 use core::num::NonZeroU32;
 
+use crate::ast::Spanned;
 use alloc::{boxed::Box, string::String, vec::Vec};
 
 use crate::ast::{BinOp, UnOp};
@@ -30,11 +32,11 @@ impl SsaVarId {
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub enum Terminator {
-    DeferError(String),
-    RtError(String, Multival),
+    DeferError(Spanned<String>),
+    RtError(Spanned<String>, Multival),
     Branch(Expr, JumpTarget, JumpTarget),
     Jump(JumpTarget),
-    Tailcall(FunctionCall),
+    Tailcall(Spanned<FunctionCall>),
     Return(Multival),
 }
 
@@ -143,9 +145,28 @@ pub enum Expr {
     Boolean(bool),
     Integer(i64),
     Float(u64),
-    Index(Box<Expr>, Index),
-    UnaryOp(UnOp, Box<Expr>),
-    BinaryOp(BinOp, Box<Expr>, Box<Expr>),
+    Index(Spanned<IndexExpr>),
+    UnaryOp(Spanned<UnaryExpr>),
+    BinaryOp(Spanned<BinaryExpr>),
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+pub struct UnaryExpr {
+    pub op: UnOp,
+    pub expr: Box<Expr>,
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+pub struct BinaryExpr {
+    pub op: BinOp,
+    pub left: Box<Expr>,
+    pub right: Box<Expr>,
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+pub struct IndexExpr {
+    pub base: Box<Expr>,
+    pub index: Index,
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
@@ -212,10 +233,17 @@ pub struct ClosureDef {
 /// * The upvar keys are assigned in reverse order from the highest numebered ssa vars.
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct FunctionDef {
+    pub debug_info: FunctionDebugInfo,
     pub num_upvars: u32,
     pub num_params: u32,
     pub variadic: bool,
     pub blocks: Vec<BasicBlock>,
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+pub struct FunctionDebugInfo {
+    pub var_names_map: BTreeMap<SsaVarId, Spanned<String>>,
+    pub function_canon_name: Spanned<String>,
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]

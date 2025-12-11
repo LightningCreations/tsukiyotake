@@ -2,7 +2,7 @@ use alloc::{boxed::Box, vec::Vec};
 use logos::Span;
 
 // TODO: redo this so it is Copy
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Hash, Eq)]
 pub struct Spanned<T>(pub T, pub Span);
 
 #[macro_export]
@@ -41,7 +41,7 @@ impl<T> Spanned<Option<T>> {
     pub fn transpose(self) -> Option<Spanned<T>> {
         match self.0 {
             None => None,
-            Some(x) => Some(Spanned(x, self.1))
+            Some(x) => Some(Spanned(x, self.1)),
         }
     }
 }
