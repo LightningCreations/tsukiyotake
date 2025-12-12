@@ -242,3 +242,19 @@ pub enum UnOp {
     Len,
     Bnot,
 }
+
+pub fn parse_string(x: &str) -> Box<[u8]> {
+    let mut iter = x.bytes();
+    assert_eq!(iter.next(), Some(b'"'));
+    let mut result = Vec::new();
+    while let Some(x) = iter.next() {
+        if x == b'"' {
+            break;
+        } else if x == b'\\' {
+            todo!()
+        } else {
+            result.push(x);
+        }
+    }
+    result.into_boxed_slice()
+}

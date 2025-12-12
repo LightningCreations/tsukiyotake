@@ -254,11 +254,17 @@ mod test {
         fn strings_in_strings() {
             let input = r#""this is a 'test'""#;
             let mut lexer = Token::lexer(input).spanned();
-            assert_eq!(lexer.next(), Some((Ok(Token::StringLiteral(r#""this is a 'test'""#)), 0..18)));
+            assert_eq!(
+                lexer.next(),
+                Some((Ok(Token::StringLiteral(r#""this is a 'test'""#)), 0..18))
+            );
 
             let input = r#"'this is a "test"'"#;
             let mut lexer = Token::lexer(input).spanned();
-            assert_eq!(lexer.next(), Some((Ok(Token::StringLiteral(r#"'this is a "test"'"#)), 0..18)));
+            assert_eq!(
+                lexer.next(),
+                Some((Ok(Token::StringLiteral(r#"'this is a "test"'"#)), 0..18))
+            );
         }
 
         #[test]

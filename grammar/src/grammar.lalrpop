@@ -1,7 +1,6 @@
 use crate::lex::Token;
 use crate::ast;
 
-use alloc::borrow::ToOwned;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use alloc::vec;
@@ -112,7 +111,7 @@ UnspannedFieldList: Vec<ast::Spanned<ast::Field<'src>>> = {
 };
 
 String: Box<[u8]> = {
-    <x:"string-literal"> => x.as_bytes().to_owned().into_boxed_slice(),
+    <x:"string-literal"> => ast::parse_string(&x),
 }
 
 pub Block: ast::Block<'src> = {

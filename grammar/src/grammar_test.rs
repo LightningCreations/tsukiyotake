@@ -22,7 +22,7 @@ fn hello_world() {
                         args: s!(
                             Args::List(s!(
                                 vec![s!(
-                                    Exp::LiteralString(s!(Box::new(*br#""Hello World""#), 6..19)),
+                                    Exp::LiteralString(s!(Box::new(*b"Hello World"), 6..19)),
                                     6..19
                                 )],
                                 6..19
@@ -181,7 +181,7 @@ fn factorial() {
                         args: s!(Args::List(
                             s!(vec![
                                 s!(Exp::LiteralString(
-                                    s!(Box::new(*br#""enter a number:""#), 142..159)
+                                    s!(Box::new(*b"enter a number:"), 142..159)
                                 ), 142..159)
                             ], 142..159)
                         ), 141..160)
@@ -215,7 +215,7 @@ fn factorial() {
                                     args: s!(Args::List(
                                         s!(vec![
                                             s!(Exp::LiteralString(
-                                                s!(Box::new(*br#""*number""#), 173..182)
+                                                s!(Box::new(*b"*number"), 173..182)
                                             ), 173..182)
                                         ], 173..182)
                                     ), 172..183)
