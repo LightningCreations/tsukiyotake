@@ -6,7 +6,7 @@ use alloc::{boxed::Box, string::String, vec::Vec};
 
 use crate::ast::{BinOp, UnOp};
 
-#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
+#[derive(Copy, Clone, Hash, PartialEq, Eq)]
 #[repr(transparent)]
 pub struct BasicBlockId(NonZeroU32);
 
@@ -18,7 +18,19 @@ impl BasicBlockId {
     pub const UNUSED: BasicBlockId = Self(nz!(0xFFFF_FFFF));
 }
 
-#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
+impl core::fmt::Display for BasicBlockId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!("%{}", self.0))
+    }
+}
+
+impl core::fmt::Debug for BasicBlockId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!("%{}", self.0))
+    }
+}
+
+#[derive(Copy, Clone, Hash, PartialEq, Eq)]
 #[repr(transparent)]
 pub struct SsaVarId(NonZeroU32);
 
@@ -28,6 +40,18 @@ impl SsaVarId {
     }
 
     pub const _ENV: Self = Self(nz!(1));
+}
+
+impl core::fmt::Display for SsaVarId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!("${}", self.0))
+    }
+}
+
+impl core::fmt::Debug for SsaVarId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!("${}", self.0))
+    }
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
