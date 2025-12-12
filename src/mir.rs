@@ -1,10 +1,13 @@
 use alloc::collections::BTreeMap;
-use core::num::NonZeroU32;
+use core::{fmt, num::NonZeroU32};
 
 use crate::ast::Spanned;
 use alloc::{boxed::Box, string::String, vec::Vec};
 
 use crate::ast::{BinOp, UnOp};
+
+mod from_hir;
+pub use from_hir::*;
 
 #[derive(Copy, Clone, Hash, PartialEq, Eq)]
 #[repr(transparent)]
@@ -18,14 +21,14 @@ impl BasicBlockId {
     pub const UNUSED: BasicBlockId = Self(nz!(0xFFFF_FFFF));
 }
 
-impl core::fmt::Display for BasicBlockId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for BasicBlockId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_fmt(format_args!("%{}", self.0))
     }
 }
 
-impl core::fmt::Debug for BasicBlockId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for BasicBlockId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_fmt(format_args!("%{}", self.0))
     }
 }
@@ -42,14 +45,14 @@ impl SsaVarId {
     pub const _ENV: Self = Self(nz!(1));
 }
 
-impl core::fmt::Display for SsaVarId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Display for SsaVarId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_fmt(format_args!("${}", self.0))
     }
 }
 
-impl core::fmt::Debug for SsaVarId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for SsaVarId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_fmt(format_args!("${}", self.0))
     }
 }
