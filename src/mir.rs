@@ -299,5 +299,5 @@ pub struct FunctionDebugInfo {
 pub struct BasicBlock {
     pub id: BasicBlockId,
     pub stats: Vec<Statement>,
-    pub term: Option<Terminator>,
+    pub term: Terminator,
 }

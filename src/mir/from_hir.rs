@@ -22,7 +22,7 @@ impl UnbuiltBasicBlock {
         BasicBlock {
             id: self.id,
             stats: core::mem::take(&mut self.stats),
-            term: core::mem::take(&mut self.term),
+            term: core::mem::take(&mut self.term).unwrap_or(Terminator::Return(Multival::Empty)),
         }
     }
 
@@ -243,7 +243,7 @@ mod test {
                             params: Multival::FixedList(vec![Expr::String(b"Hello World".into())])
                         }
                     )],
-                    term: None
+                    term: Terminator::Return(Multival::Empty),
                 }],
             }
         )
