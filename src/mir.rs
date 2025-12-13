@@ -9,13 +9,17 @@ use crate::ast::{BinOp, UnOp};
 mod from_hir;
 pub use from_hir::*;
 
-#[derive(Copy, Clone, Hash, PartialEq, Eq)]
+#[derive(Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(transparent)]
 pub struct BasicBlockId(NonZeroU32);
 
 impl BasicBlockId {
     pub(crate) const fn new_unchecked(x: NonZeroU32) -> Self {
         Self(x)
+    }
+
+    pub const fn next(self) -> Self {
+        Self(self.0.checked_add(1).unwrap())
     }
 
     pub const UNUSED: BasicBlockId = Self(nz!(0xFFFF_FFFF));
@@ -33,13 +37,24 @@ impl fmt::Debug for BasicBlockId {
     }
 }
 
-#[derive(Copy, Clone, Hash, PartialEq, Eq)]
+#[macro_export]
+macro_rules! bb {
+    ($x:expr) => {
+        BasicBlockId::new_unchecked(NonZeroU32::new($x).unwrap())
+    };
+}
+
+#[derive(Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 #[repr(transparent)]
 pub struct SsaVarId(NonZeroU32);
 
 impl SsaVarId {
     pub(crate) const fn new_unchecked(x: NonZeroU32) -> Self {
         Self(x)
+    }
+
+    pub const fn next(self) -> Self {
+        Self(self.0.checked_add(1).unwrap())
     }
 
     pub const _ENV: Self = Self(nz!(1));
@@ -55,6 +70,13 @@ impl fmt::Debug for SsaVarId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_fmt(format_args!("${}", self.0))
     }
+}
+
+#[macro_export]
+macro_rules! ssa_var {
+    ($x:expr) => {
+        SsaVarId::new_unchecked(NonZeroU32::new($x).unwrap())
+    };
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
