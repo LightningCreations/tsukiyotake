@@ -386,18 +386,23 @@ pub Args: ast::Args<'src> = {
     "(" <x:List<Exp>> ")" => ast::Args::List(x),
 }
 
-pub FuncBody: ast::FuncBody<'src> = {
-    "(" <params:List<"ident">> ")" <block:Spanned<Block>> "end" => {
-        ast::FuncBody {
-            params,
-            varargs: None,
-            block,
-        }
+ParamList: (Vec<ast::Spanned<&'src str>>, Option<ast::Spanned<()>>) = {
+    <Spanned<"...">> => (vec![], Some(<>.map(|_| ()))),
+    <first:Spanned<"ident">> <mut list:("," <Spanned<"ident">>)*> => {
+        list.insert(0, first);
+        (list, None)
     },
-    "(" <varargs:(<Spanned<"...">>)?> ")" <block:Spanned<Block>> "end" => {
+    <first:Spanned<"ident">> <mut list:("," <Spanned<"ident">>)*> "," <varargs:Spanned<"...">> => {
+        list.insert(0, first);
+        (list, Some(varargs.map(|_| ())))
+    }
+}
+
+pub FuncBody: ast::FuncBody<'src> = {
+    "(" <params:Spanned<ParamList?>> ")" <block:Spanned<Block>> "end" => {
         ast::FuncBody {
-            params: ast::Spanned(vec![], 0..0),
-            varargs: varargs.map(|ast::Spanned(_, s)| ast::Spanned((), s)),
+            params: params.clone().map(|x| if let Some(x) = x { x.0 } else { vec![] }),
+            varargs: params.0.and_then(|x| x.1),
             block,
         }
     },
