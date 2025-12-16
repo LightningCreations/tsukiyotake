@@ -105,18 +105,18 @@ impl MirConverter {
     fn convert_exp(&mut self, exp: &hir::Exp) -> Expr {
         match exp {
             hir::Exp::LiteralString(x) => Expr::String(x.0.clone().to_vec()), // TODO: why doesn't the MIR use Box<u8>?
-            hir::Exp::Var(x) => match &x.0 {
-                hir::Var::Name(x) => Expr::Var(self.get_var(&x.0)),
+            hir::Exp::Var(x) => match &**x {
+                hir::Var::Name(x) => Expr::Var(self.get_var(&**x)),
                 hir::Var::Path { lhs, field } => {
-                    let lhs = self.convert_exp(&lhs.0);
+                    let lhs = self.convert_exp(&**lhs);
                     Expr::Index(x.as_ref().map(|_| IndexExpr {
                         base: Box::new(lhs),
                         index: Index::Name(field.0.into()),
                     }))
                 }
                 hir::Var::Index { lhs, idx } => {
-                    let lhs = self.convert_exp(&lhs.0);
-                    let idx = self.convert_exp(&idx.0);
+                    let lhs = self.convert_exp(&**lhs);
+                    let idx = self.convert_exp(&**idx);
                     Expr::Index(x.as_ref().map(|_| IndexExpr {
                         base: Box::new(lhs),
                         index: Index::Expr(Box::new(idx)),
@@ -130,11 +130,11 @@ impl MirConverter {
     fn write_stat(&mut self, stat: &hir::Stat) {
         match stat {
             hir::Stat::FunctionCall(x) => {
-                let lhs = self.convert_exp(&x.0.lhs.0);
+                let lhs = self.convert_exp(&x.lhs);
 
                 // TODO: this... this doesn't handle multires correctly, does it.
                 let params = Multival::FixedList(
-                    x.0.args.0.iter().map(|x| self.convert_exp(&x.0)).collect(),
+                    x.args.iter().map(|x| self.convert_exp(&x)).collect(),
                 );
 
                 self.cur_block
@@ -147,7 +147,7 @@ impl MirConverter {
     fn write_block_inner(&mut self, block_id: BasicBlockId, block: &hir::Block) {
         self.cur_block.id = block_id;
         for stat in &block.stats {
-            self.write_stat(&stat.0);
+            self.write_stat(&stat);
         }
         self.basic_blocks.push(self.cur_block.finish_and_reset());
     }

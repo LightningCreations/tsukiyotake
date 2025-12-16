@@ -1,9 +1,25 @@
+use std::ops::{Deref, DerefMut};
+
 use alloc::{boxed::Box, vec::Vec};
 use logos::Span;
 
 // TODO: redo this so it is Copy
 #[derive(Clone, Debug, PartialEq, Hash, Eq)]
 pub struct Spanned<T>(pub T, pub Span);
+
+impl<T> Deref for Spanned<T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        &self.0
+    }
+}
+
+impl<T> DerefMut for Spanned<T> {
+    fn deref_mut(&mut self) -> &mut T {
+        &mut self.0
+    }
+}
 
 #[macro_export]
 macro_rules! s {

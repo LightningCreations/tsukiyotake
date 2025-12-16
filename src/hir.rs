@@ -164,15 +164,15 @@ impl HirConversionContext {
         &mut self,
         ast: Spanned<&ast::Stat<'src>>,
     ) -> Vec<Spanned<Stat<'src>>> {
-        match ast.0 {
+        match &*ast {
             ast::Stat::Empty => vec![],
             ast::Stat::Assign { vars, exps } => todo!(),
             ast::Stat::FunctionCall(call) => {
                 let call = call.as_ref();
                 // Needs to be handled specially; just about every possible function call scenario is different.
                 let mut stats = vec![];
-                let mut args = self.convert_args(call.0.args.as_ref());
-                if let Some(method) = &call.0.method {
+                let mut args = self.convert_args(call.args.as_ref());
+                if let Some(method) = &call.method {
                     // create local for object
                     let local = self.new_local();
                     stats.push(Spanned::synth(Stat::Local {
@@ -181,11 +181,11 @@ impl HirConversionContext {
                             attrib: None,
                         })]),
                         exps: Some(Spanned::synth(vec![
-                            self.convert_prefix_exp((*call.0.lhs).as_ref()),
+                            self.convert_prefix_exp((*call.lhs).as_ref()),
                         ])),
                     }));
                     // add self parameter
-                    args.0.insert(
+                    args.insert(
                         0,
                         Spanned::synth(Exp::Var(Spanned::synth(Var::Name(Spanned::synth(
                             local.clone(),
@@ -213,7 +213,7 @@ impl HirConversionContext {
                     stats.push(Spanned(
                         Stat::FunctionCall(Spanned(
                             FunctionCall {
-                                lhs: Box::new(self.convert_prefix_exp((*call.0.lhs).as_ref())),
+                                lhs: Box::new(self.convert_prefix_exp((*call.lhs).as_ref())),
                                 args,
                             },
                             call.1,
@@ -251,7 +251,7 @@ impl HirConversionContext {
     pub fn convert_var<'src>(&mut self, ast: Spanned<&ast::Var<'src>>) -> Spanned<Var<'src>> {
         ast.map(|x| match x {
             ast::Var::Name(x) => {
-                if self.in_scope(x.0) {
+                if self.in_scope(x) {
                     Var::Name(x.as_ref().map(|x| (*x).into()))
                 } else {
                     Var::Path {
@@ -296,7 +296,7 @@ impl HirConversionContext {
     }
 
     pub fn convert_args<'src>(&mut self, ast: Spanned<&ast::Args<'src>>) -> List<Exp<'src>> {
-        match ast.0 {
+        match &*ast {
             ast::Args::List(list) => list
                 .as_ref()
                 .map(|x| x.iter().map(|x| self.convert_exp(x.as_ref())).collect()),
