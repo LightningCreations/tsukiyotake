@@ -1,4 +1,8 @@
-use std::ops::{Deref, DerefMut};
+use core::fmt;
+use std::{
+    fmt::Write,
+    ops::{Deref, DerefMut},
+};
 
 use alloc::{boxed::Box, vec::Vec};
 use logos::Span;
@@ -18,6 +22,12 @@ impl<T> Deref for Spanned<T> {
 impl<T> DerefMut for Spanned<T> {
     fn deref_mut(&mut self) -> &mut T {
         &mut self.0
+    }
+}
+
+impl<T: fmt::Display> fmt::Display for Spanned<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.0.fmt(f)
     }
 }
 
@@ -68,6 +78,33 @@ pub type List<T> = Spanned<Vec<Spanned<T>>>;
 pub struct Block<'src> {
     pub stats: Vec<Spanned<Stat<'src>>>,
     pub retstat: Option<List<Exp<'src>>>,
+}
+
+impl Block<'_> {
+    pub fn pretty_print(&self, f: &mut fmt::Formatter, pad: &String) -> fmt::Result {
+        for stat in &self.stats {
+            write!(f, "{pad}")?;
+            stat.pretty_print(f, pad)?;
+            write!(f, "\n")?;
+        }
+        if let Some(retstat) = &self.retstat {
+            write!(f, "{pad}return")?;
+            let mut prefix = "";
+            for val in &**retstat {
+                write!(f, " {prefix}")?;
+                val.pretty_print(f, pad)?;
+                prefix = ",";
+            }
+            write!(f, "\n")?;
+        }
+        Ok(())
+    }
+}
+
+impl fmt::Display for Block<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.pretty_print(f, &String::new())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -121,6 +158,58 @@ pub enum Stat<'src> {
     },
 }
 
+impl Stat<'_> {
+    pub fn pretty_print(&self, f: &mut fmt::Formatter, pad: &String) -> fmt::Result {
+        match self {
+            Self::Empty => f.write_char(';'),
+            Self::Assign { vars, exps } => {
+                let mut prefix = "";
+                for var in &**vars {
+                    write!(f, "{prefix}")?;
+                    var.pretty_print(f, pad)?;
+                    prefix = ", ";
+                }
+                f.write_str(" = ")?;
+                prefix = "";
+                for exp in &**exps {
+                    write!(f, "{prefix}")?;
+                    exp.pretty_print(f, pad)?;
+                    prefix = ", ";
+                }
+                Ok(())
+            }
+            Self::FunctionCall(x) => x.pretty_print(f, pad),
+            Self::If {
+                main: (main_cond, main_block),
+                elseifs,
+                else_block,
+            } => {
+                let new_pads = pad.clone() + "    ";
+                write!(f, "if ")?;
+                main_cond.pretty_print(f, pad)?;
+                write!(f, " then\n")?;
+                main_block.pretty_print(f, &new_pads)?;
+                for (e_cond, e_block) in elseifs {
+                    write!(f, "{pad}elseif ")?;
+                    e_cond.pretty_print(f, pad)?;
+                    write!(f, " then\n")?;
+                    e_block.pretty_print(f, &new_pads)?;
+                }
+                if let Some(e_block) = else_block {
+                    write!(f, "{pad}else\n")?;
+                    e_block.pretty_print(f, &new_pads)?;
+                }
+                write!(f, "{pad}end")
+            }
+            Self::Function { name, body } => {
+                write!(f, "function {name}")?;
+                body.pretty_print(f, pad)
+            }
+            x => todo!("{x:?}"),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct AttName<'src> {
     pub name: Spanned<&'src str>,
@@ -131,6 +220,20 @@ pub struct AttName<'src> {
 pub struct FuncName<'src> {
     pub path: List<&'src str>,
     pub method: Option<Spanned<&'src str>>,
+}
+
+impl fmt::Display for FuncName<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut prefix = "";
+        for comp in &**self.path {
+            write!(f, "{prefix}{comp}")?;
+            prefix = ".";
+        }
+        if let Some(method) = &self.method {
+            write!(f, ":{method}")?;
+        }
+        Ok(())
+    }
 }
 
 // Otherwise known as lvalue
@@ -145,6 +248,19 @@ pub enum Var<'src> {
         lhs: Box<Spanned<PrefixExp<'src>>>,
         member: Spanned<&'src str>,
     },
+}
+
+impl Var<'_> {
+    pub fn pretty_print(&self, f: &mut fmt::Formatter, pad: &String) -> fmt::Result {
+        match self {
+            Self::Name(x) => f.write_str(x),
+            Self::Path { lhs, member } => {
+                lhs.pretty_print(f, pad)?;
+                write!(f, ".{member}")
+            }
+            x => todo!("{x:?}"),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -170,11 +286,39 @@ pub enum Exp<'src> {
     },
 }
 
+impl Exp<'_> {
+    pub fn pretty_print(&self, f: &mut fmt::Formatter, pad: &String) -> fmt::Result {
+        match self {
+            Self::Nil => write!(f, "nil"),
+            Self::NumeralInt(x) => write!(f, "{x}"),
+            Self::NumeralFloat(x) => write!(f, "{x}"),
+            Self::LiteralString(x) => write!(f, "{:?}", str::from_utf8(x).unwrap()), // TODO: Write a correct string formatter. This is a cheat.
+            Self::PrefixExp(x) => x.pretty_print(f, pad),
+            Self::BinExp { lhs, op, rhs } => {
+                lhs.pretty_print(f, pad)?;
+                write!(f, " {op} ")?;
+                rhs.pretty_print(f, pad)
+            }
+            x => todo!("{x:?}"),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum PrefixExp<'src> {
     Var(Spanned<Var<'src>>),
     FunctionCall(Spanned<FunctionCall<'src>>),
     Parens(Box<Spanned<Exp<'src>>>),
+}
+
+impl PrefixExp<'_> {
+    pub fn pretty_print(&self, f: &mut fmt::Formatter, pad: &String) -> fmt::Result {
+        match self {
+            Self::Var(x) => x.pretty_print(f, pad),
+            Self::FunctionCall(x) => x.pretty_print(f, pad),
+            x => todo!("{x:?}"),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -184,6 +328,16 @@ pub struct FunctionCall<'src> {
     pub args: Spanned<Args<'src>>,
 }
 
+impl FunctionCall<'_> {
+    pub fn pretty_print(&self, f: &mut fmt::Formatter, pad: &String) -> fmt::Result {
+        self.lhs.pretty_print(f, pad)?;
+        if let Some(method) = &self.method {
+            write!(f, ":{method}")?;
+        }
+        self.args.pretty_print(f, pad)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Args<'src> {
     List(List<Exp<'src>>),
@@ -191,11 +345,47 @@ pub enum Args<'src> {
     String(Spanned<Box<[u8]>>),
 }
 
+impl Args<'_> {
+    pub fn pretty_print(&self, f: &mut fmt::Formatter, pad: &String) -> fmt::Result {
+        match self {
+            Self::List(list) => {
+                write!(f, "(")?;
+                let mut prefix = "";
+                for x in &**list {
+                    write!(f, "{prefix}")?;
+                    x.pretty_print(f, pad)?;
+                    prefix = ", ";
+                }
+                write!(f, ")")
+            }
+            x => todo!("{x:?}"),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct FuncBody<'src> {
     pub params: List<&'src str>,
     pub varargs: Option<Spanned<()>>,
     pub block: Spanned<Block<'src>>,
+}
+
+impl FuncBody<'_> {
+    pub fn pretty_print(&self, f: &mut fmt::Formatter, pad: &String) -> fmt::Result {
+        write!(f, "(")?;
+        let mut prefix = "";
+        for param in &**self.params {
+            write!(f, "{prefix}{param}")?;
+            prefix = ", ";
+        }
+        if self.varargs.is_some() {
+            write!(f, "{prefix}...")?;
+        }
+        write!(f, ")\n")?;
+        let new_pad = pad.clone() + "    ";
+        self.block.pretty_print(f, &new_pad)?;
+        write!(f, "{pad}end")
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -248,6 +438,34 @@ pub enum BinOp {
     Neq, // derived from Eq
     And, // keyword/boolean
     Or,  // keyword/boolean
+}
+
+impl fmt::Display for BinOp {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str(match self {
+            BinOp::Add => "+",
+            BinOp::Sub => "-",
+            BinOp::Mul => "*",
+            BinOp::Div => "/",
+            BinOp::Idiv => "//",
+            BinOp::Pow => "^",
+            BinOp::Mod => "%",
+            BinOp::Band => "&",
+            BinOp::Bxor => "~",
+            BinOp::Bor => "|",
+            BinOp::Shr => ">>",
+            BinOp::Shl => "<<",
+            BinOp::Concat => "..",
+            BinOp::Lt => "<",
+            BinOp::Le => "<=",
+            BinOp::Gt => ">",
+            BinOp::Ge => ">=",
+            BinOp::Eq => "==",
+            BinOp::Neq => "~=",
+            BinOp::And => "and",
+            BinOp::Or => "or",
+        })
+    }
 }
 
 // most names are based on the related metatable function

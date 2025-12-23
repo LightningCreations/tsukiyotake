@@ -42,19 +42,19 @@ fn hello_world() {
 #[test]
 fn factorial() {
     let input = indoc! {r#"
-            -- defines a factorial function
-            function fact(n)
-                if n == 0 then
-                    return 1
-                else
-                    return n * fact(n-1)
-                end
+        -- defines a factorial function
+        function fact(n)
+            if n == 0 then
+                return 1
+            else
+                return n * fact(n-1)
             end
+        end
 
-            print("enter a number:")
-            a = io.read("*number")
-            print(fact(a))
-        "#};
+        print("enter a number:")
+        a = io.read("*number")
+        print(fact(a))
+    "#};
     let lexer = Lexer::new(&input);
     let parser = BlockParser::new();
     let ast = parser.parse(input, lexer);
@@ -266,4 +266,37 @@ fn factorial() {
             ], retstat: None
         })
     );
+}
+
+#[test]
+fn factorial_fmt() {
+    let input = indoc! {r#"
+        -- defines a factorial function
+        function fact(n)
+            if n == 0 then
+                return 1
+            else
+                return n * fact(n-1)
+            end
+        end
+
+        print("enter a number:")
+        a = io.read("*number")
+        print(fact(a))
+    "#};
+    let lexer = Lexer::new(&input);
+    let parser = BlockParser::new();
+    let ast = parser.parse(input, lexer).unwrap();
+    assert_eq!(ast.to_string(), indoc! {r#"
+        function fact(n)
+            if n == 0 then
+                return 1
+            else
+                return n * fact(n - 1)
+            end
+        end
+        print("enter a number:")
+        a = io.read("*number")
+        print(fact(a))
+    "#});
 }
