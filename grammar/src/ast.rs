@@ -210,6 +210,12 @@ impl Stat<'_> {
     }
 }
 
+impl fmt::Display for Stat<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.pretty_print(f, &String::new())
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct AttName<'src> {
     pub name: Spanned<&'src str>,
@@ -260,6 +266,12 @@ impl Var<'_> {
             }
             x => todo!("{x:?}"),
         }
+    }
+}
+
+impl fmt::Display for Var<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.pretty_print(f, &String::new())
     }
 }
 
@@ -314,6 +326,12 @@ impl Exp<'_> {
     }
 }
 
+impl fmt::Display for Exp<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.pretty_print(f, &String::new())
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum PrefixExp<'src> {
     Var(Spanned<Var<'src>>),
@@ -331,6 +349,12 @@ impl PrefixExp<'_> {
     }
 }
 
+impl fmt::Display for PrefixExp<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.pretty_print(f, &String::new())
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct FunctionCall<'src> {
     pub lhs: Box<Spanned<PrefixExp<'src>>>,
@@ -345,6 +369,12 @@ impl FunctionCall<'_> {
             write!(f, ":{method}")?;
         }
         self.args.pretty_print(f, pad)
+    }
+}
+
+impl fmt::Display for FunctionCall<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.pretty_print(f, &String::new())
     }
 }
 
@@ -373,6 +403,12 @@ impl Args<'_> {
     }
 }
 
+impl fmt::Display for Args<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.pretty_print(f, &String::new())
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct FuncBody<'src> {
     pub params: List<&'src str>,
@@ -395,6 +431,12 @@ impl FuncBody<'_> {
         let new_pad = pad.clone() + "    ";
         self.block.pretty_print(f, &new_pad)?;
         write!(f, "{pad}end")
+    }
+}
+
+impl fmt::Display for FuncBody<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.pretty_print(f, &String::new())
     }
 }
 
@@ -436,8 +478,13 @@ impl<'src> Field<'src> {
                 val.pretty_print(f, pad)
             }
             Self::Unnamed { val } => val.pretty_print(f, pad),
-            x => todo!("{x:?}"),
         }
+    }
+}
+
+impl fmt::Display for Field<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.pretty_print(f, &String::new())
     }
 }
 
