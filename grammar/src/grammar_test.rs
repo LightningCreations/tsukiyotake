@@ -287,7 +287,9 @@ fn factorial_fmt() {
     let lexer = Lexer::new(&input);
     let parser = BlockParser::new();
     let ast = parser.parse(input, lexer).unwrap();
-    assert_eq!(ast.to_string(), indoc! {r#"
+    assert_eq!(
+        ast.to_string(),
+        indoc! {r#"
         function fact(n)
             if n == 0 then
                 return 1
@@ -298,5 +300,6 @@ fn factorial_fmt() {
         print("enter a number:")
         a = io.read("*number")
         print(fact(a))
-    "#});
+    "#}
+    );
 }

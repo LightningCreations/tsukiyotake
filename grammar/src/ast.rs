@@ -294,6 +294,16 @@ impl Exp<'_> {
             Self::NumeralFloat(x) => write!(f, "{x}"),
             Self::LiteralString(x) => write!(f, "{:?}", str::from_utf8(x).unwrap()), // TODO: Write a correct string formatter. This is a cheat.
             Self::PrefixExp(x) => x.pretty_print(f, pad),
+            Self::TableConstructor(list) => {
+                f.write_str("{")?;
+                let mut prefix = "";
+                for field in &**list {
+                    write!(f, "{prefix} ")?;
+                    field.pretty_print(f, pad)?;
+                    prefix = ",";
+                }
+                f.write_str(" }")
+            }
             Self::BinExp { lhs, op, rhs } => {
                 lhs.pretty_print(f, pad)?;
                 write!(f, " {op} ")?;
@@ -410,6 +420,23 @@ impl<'src> Field<'src> {
             Field::Exp { val, .. } => val,
             Field::Named { val, .. } => val,
             Field::Unnamed { val } => val,
+        }
+    }
+
+    pub fn pretty_print(&self, f: &mut fmt::Formatter, pad: &String) -> fmt::Result {
+        match self {
+            Self::Exp { field, val } => {
+                f.write_char('[')?;
+                field.pretty_print(f, pad)?;
+                f.write_str("] = ")?;
+                val.pretty_print(f, pad)
+            }
+            Self::Named { field, val } => {
+                write!(f, "{field} = ")?;
+                val.pretty_print(f, pad)
+            }
+            Self::Unnamed { val } => val.pretty_print(f, pad),
+            x => todo!("{x:?}"),
         }
     }
 }

@@ -133,9 +133,8 @@ impl MirConverter {
                 let lhs = self.convert_exp(&x.lhs);
 
                 // TODO: this... this doesn't handle multires correctly, does it.
-                let params = Multival::FixedList(
-                    x.args.iter().map(|x| self.convert_exp(&x)).collect(),
-                );
+                let params =
+                    Multival::FixedList(x.args.iter().map(|x| self.convert_exp(&x)).collect());
 
                 self.cur_block
                     .push(Statement::Call(None, FunctionCall { base: lhs, params }));
