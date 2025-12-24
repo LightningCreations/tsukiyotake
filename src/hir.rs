@@ -1,6 +1,6 @@
 use core::sync::atomic::AtomicUsize;
 
-use alloc::borrow::ToOwned;
+use alloc::borrow::{Cow, ToOwned};
 use alloc::rc::Rc;
 use alloc::string::String;
 use alloc::{boxed::Box, vec::Vec};
@@ -62,17 +62,17 @@ pub enum Stat<'src> {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct AttName<'src> {
-    pub name: Spanned<String>,
-    pub attrib: Option<Spanned<&'src str>>,
+    pub name: Spanned<Cow<'src, str>>,
+    pub attrib: Option<Spanned<Cow<'src, str>>>,
 }
 
 // Otherwise known as lvalue
 #[derive(Clone, Debug, PartialEq)]
 pub enum Var<'src> {
-    Name(Spanned<String>),
+    Name(Spanned<Cow<'src, str>>),
     Path {
         lhs: Box<Spanned<Exp<'src>>>,
-        field: Spanned<&'src str>,
+        field: Spanned<Cow<'src, str>>,
     },
     Index {
         lhs: Box<Spanned<Exp<'src>>>,
@@ -252,7 +252,7 @@ impl HirConversionContext {
         ast.map(|x| match x {
             ast::Var::Name(x) => {
                 if self.in_scope(x) {
-                    Var::Name(x.as_ref().map(|x| (*x).into()))
+                    Var::Name(x.clone())
                 } else {
                     Var::Path {
                         lhs: Box::new(Spanned::synth(Exp::Var(Spanned::synth(Var::Name(
@@ -332,14 +332,14 @@ impl HirConversionContext {
         }
     }
 
-    fn new_local(&mut self) -> String {
+    fn new_local<'src>(&mut self) -> Cow<'src, str> {
         let name = format!(
             "$synth_{}",
             self.synthetic_counter
                 .fetch_add(1, core::sync::atomic::Ordering::Relaxed)
         );
         self.locals.insert(name.clone());
-        name
+        name.into()
     }
 }
 
@@ -357,7 +357,7 @@ mod test {
                 ast::Stat::FunctionCall(s!(
                     ast::FunctionCall {
                         lhs: Box::new(s!(
-                            ast::PrefixExp::Var(s!(ast::Var::Name(s!("print", 0..5)), 0..5)),
+                            ast::PrefixExp::Var(s!(ast::Var::Name(s!("print".into(), 0..5)), 0..5)),
                             0..5
                         )),
                         method: None,
@@ -399,7 +399,7 @@ mod test {
                                         lhs: Box::new(synth!(Exp::Var(synth!(Var::Name(synth!(
                                             "_ENV".into()
                                         )))))),
-                                        field: s!("print", 0..5)
+                                        field: s!("print".into(), 0..5)
                                     },
                                     0..5,
                                 )),

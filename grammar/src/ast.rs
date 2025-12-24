@@ -1,10 +1,10 @@
 use core::fmt;
-use std::{
+use core::{
     fmt::Write,
     ops::{Deref, DerefMut},
 };
 
-use alloc::{boxed::Box, vec::Vec};
+use alloc::{borrow::Cow, boxed::Box, vec::Vec};
 use logos::Span;
 
 // TODO: redo this so it is Copy
@@ -115,9 +115,9 @@ pub enum Stat<'src> {
         exps: List<Exp<'src>>,
     },
     FunctionCall(Spanned<FunctionCall<'src>>),
-    Label(Spanned<&'src str>),
+    Label(Spanned<Cow<'src, str>>),
     Break,
-    Goto(Spanned<&'src str>),
+    Goto(Spanned<Cow<'src, str>>),
     DoBlock(Box<Spanned<Block<'src>>>),
     While {
         cond: Spanned<Exp<'src>>,
@@ -133,14 +133,14 @@ pub enum Stat<'src> {
         else_block: Option<Box<Spanned<Block<'src>>>>,
     },
     ForNumerical {
-        var: Spanned<&'src str>,
+        var: Spanned<Cow<'src, str>>,
         initial: Spanned<Exp<'src>>,
         limit: Spanned<Exp<'src>>,
         step: Option<Spanned<Exp<'src>>>,
         block: Box<Spanned<Block<'src>>>,
     },
     ForGeneric {
-        names: List<&'src str>,
+        names: List<Cow<'src, str>>,
         exps: List<Exp<'src>>,
         block: Box<Spanned<Block<'src>>>,
     },
@@ -149,7 +149,7 @@ pub enum Stat<'src> {
         body: Spanned<FuncBody<'src>>,
     },
     LocalFunction {
-        name: Spanned<&'src str>,
+        name: Spanned<Cow<'src, str>>,
         body: Spanned<FuncBody<'src>>,
     },
     Local {
@@ -218,14 +218,14 @@ impl fmt::Display for Stat<'_> {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct AttName<'src> {
-    pub name: Spanned<&'src str>,
-    pub attrib: Option<Spanned<&'src str>>,
+    pub name: Spanned<Cow<'src, str>>,
+    pub attrib: Option<Spanned<Cow<'src, str>>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct FuncName<'src> {
-    pub path: List<&'src str>,
-    pub method: Option<Spanned<&'src str>>,
+    pub path: List<Cow<'src, str>>,
+    pub method: Option<Spanned<Cow<'src, str>>>,
 }
 
 impl fmt::Display for FuncName<'_> {
@@ -245,14 +245,14 @@ impl fmt::Display for FuncName<'_> {
 // Otherwise known as lvalue
 #[derive(Clone, Debug, PartialEq)]
 pub enum Var<'src> {
-    Name(Spanned<&'src str>),
+    Name(Spanned<Cow<'src, str>>),
     Index {
         lhs: Box<Spanned<PrefixExp<'src>>>,
         idx: Box<Spanned<Exp<'src>>>,
     },
     Path {
         lhs: Box<Spanned<PrefixExp<'src>>>,
-        member: Spanned<&'src str>,
+        member: Spanned<Cow<'src, str>>,
     },
 }
 
@@ -358,7 +358,7 @@ impl fmt::Display for PrefixExp<'_> {
 #[derive(Clone, Debug, PartialEq)]
 pub struct FunctionCall<'src> {
     pub lhs: Box<Spanned<PrefixExp<'src>>>,
-    pub method: Option<Spanned<&'src str>>,
+    pub method: Option<Spanned<Cow<'src, str>>>,
     pub args: Spanned<Args<'src>>,
 }
 
@@ -411,7 +411,7 @@ impl fmt::Display for Args<'_> {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct FuncBody<'src> {
-    pub params: List<&'src str>,
+    pub params: List<Cow<'src, str>>,
     pub varargs: Option<Spanned<()>>,
     pub block: Spanned<Block<'src>>,
 }
@@ -447,7 +447,7 @@ pub enum Field<'src> {
         val: Box<Spanned<Exp<'src>>>,
     },
     Named {
-        field: Spanned<&'src str>,
+        field: Spanned<Cow<'src, str>>,
         val: Box<Spanned<Exp<'src>>>,
     },
     Unnamed {

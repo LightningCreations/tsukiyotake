@@ -1,3 +1,4 @@
+use alloc::borrow::ToOwned;
 use hashbrown::HashMap;
 
 use crate::{bb, hir, mir::*};
@@ -111,7 +112,7 @@ impl MirConverter {
                     let lhs = self.convert_exp(&**lhs);
                     Expr::Index(x.as_ref().map(|_| IndexExpr {
                         base: Box::new(lhs),
-                        index: Index::Name(field.0.into()),
+                        index: Index::Name(field.0.clone().into_owned()),
                     }))
                 }
                 hir::Var::Index { lhs, idx } => {
@@ -189,7 +190,7 @@ mod test {
                                     lhs: Box::new(synth!(hir::Exp::Var(synth!(hir::Var::Name(
                                         synth!("_ENV".into())
                                     ))))),
-                                    field: s!("print", 0..5)
+                                    field: s!("print".into(), 0..5)
                                 },
                                 0..5,
                             )),

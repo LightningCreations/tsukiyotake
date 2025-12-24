@@ -15,7 +15,7 @@ fn hello_world() {
                 Stat::FunctionCall(s!(
                     FunctionCall {
                         lhs: Box::new(s!(
-                            PrefixExp::Var(s!(Var::Name(s!("print", 0..5)), 0..5)),
+                            PrefixExp::Var(s!(Var::Name(s!("print".into(), 0..5)), 0..5)),
                             0..5
                         )),
                         method: None,
@@ -66,13 +66,13 @@ fn factorial() {
                 s!(Stat::Function {
                     name: s!(FuncName {
                         path: s!(vec![
-                            s!("fact", 41..45)
+                            s!("fact".into(), 41..45)
                         ], 41..45),
                         method: None
                     }, 41..45),
                     body: s!(FuncBody {
                         params: s!(vec![
-                            s!("n", 46..47)
+                            s!("n".into(), 46..47)
                         ], 46..47),
                         varargs: None,
                         block: s!(Block {
@@ -84,7 +84,7 @@ fn factorial() {
                                                 s!(Exp::PrefixExp(s!(
                                                     PrefixExp::Var(
                                                         s!(Var::Name(
-                                                            s!("n", 56..57)
+                                                            s!("n".into(), 56..57)
                                                         ), 56..57)
                                                     ), 56..57)
                                                 ), 56..57)
@@ -115,7 +115,7 @@ fn factorial() {
                                                         s!(Exp::PrefixExp(
                                                             s!(PrefixExp::Var(
                                                                 s!(Var::Name(
-                                                                    s!("n", 109..110)
+                                                                    s!("n".into(), 109..110)
                                                                 ), 109..110)
                                                             ), 109..110)
                                                         ), 109..110)
@@ -128,7 +128,7 @@ fn factorial() {
                                                                     lhs: Box::new(
                                                                         s!(PrefixExp::Var(
                                                                             s!(Var::Name(
-                                                                                s!("fact", 113..117)
+                                                                                s!("fact".into(), 113..117)
                                                                             ), 113..117)
                                                                         ), 113..117)
                                                                     ),
@@ -140,7 +140,7 @@ fn factorial() {
                                                                                     s!(Exp::PrefixExp(
                                                                                         s!(PrefixExp::Var(
                                                                                             s!(Var::Name(
-                                                                                                s!("n", 118..119)
+                                                                                                s!("n".into(), 118..119)
                                                                                             ), 118..119)
                                                                                         ), 118..119)
                                                                                     ), 118..119)
@@ -173,7 +173,7 @@ fn factorial() {
                         lhs: Box::new(
                             s!(PrefixExp::Var(
                                 s!(Var::Name(
-                                    s!("print", 136..141)
+                                    s!("print".into(), 136..141)
                                 ), 136..141)
                             ), 136..141)
                         ),
@@ -190,7 +190,7 @@ fn factorial() {
                 s!(Stat::Assign {
                     vars: s!(vec![
                         s!(Var::Name(
-                            s!("a", 161..162)
+                            s!("a".into(), 161..162)
                         ), 161..162)
                     ], 161..162),
                     exps: s!(vec![
@@ -203,11 +203,11 @@ fn factorial() {
                                                 lhs: Box::new(
                                                     s!(PrefixExp::Var(
                                                         s!(Var::Name(
-                                                            s!("io", 165..167)
+                                                            s!("io".into(), 165..167)
                                                         ), 165..167)
                                                     ), 165..167)
                                                 ),
-                                                member: s!("read", 168..172)
+                                                member: s!("read".into(), 168..172)
                                             }, 165..172)
                                         ), 165..172)
                                     ),
@@ -229,7 +229,7 @@ fn factorial() {
                         lhs: Box::new(
                             s!(PrefixExp::Var(
                                 s!(Var::Name(
-                                    s!("print", 184..189)
+                                    s!("print".into(), 184..189)
                                 ), 184..189)
                             ), 184..189)
                         ),
@@ -241,7 +241,7 @@ fn factorial() {
                                         s!(FunctionCall {
                                             lhs: Box::new(s!(PrefixExp::Var(
                                                 s!(Var::Name(
-                                                    s!("fact", 190..194)
+                                                    s!("fact".into(), 190..194)
                                                 ), 190..194)
                                             ), 190..194)),
                                             method: None,
@@ -250,7 +250,7 @@ fn factorial() {
                                                     s!(Exp::PrefixExp(
                                                         s!(PrefixExp::Var(
                                                             s!(Var::Name(
-                                                                s!("a", 195..196)
+                                                                s!("a".into(), 195..196)
                                                             ), 195..196)
                                                         ), 195..196)
                                                     ), 195..196)

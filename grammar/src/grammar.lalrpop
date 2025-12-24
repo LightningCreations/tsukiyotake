@@ -1,6 +1,7 @@
 use crate::lex::Token;
 use crate::ast;
 
+use alloc::borrow::Cow;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 use alloc::vec;
@@ -122,9 +123,9 @@ pub Stat: ast::Stat<'src> = {
     ";" => ast::Stat::Empty,
     <vars:List<Var>> "=" <exps:List<Exp>> => ast::Stat::Assign { vars, exps },
     <Spanned<FunctionCall>> => ast::Stat::FunctionCall(<>),
-    "::" <Spanned<"ident">> "::" => ast::Stat::Label(<>),
+    "::" <Spanned<"ident">> "::" => ast::Stat::Label(<>.map(|x| x.into())),
     "break" => ast::Stat::Break,
-    "goto" <Spanned<"ident">> => ast::Stat::Goto(<>),
+    "goto" <Spanned<"ident">> => ast::Stat::Goto(<>.map(|x| x.into())),
     "do" <Box<Spanned<Block>>> "end" => ast::Stat::DoBlock(<>),
     "while" <cond:Spanned<Exp>> "do" <block:Box<Spanned<Block>>> "end" => ast::Stat::While { cond, block },
     "repeat" <block:Box<Spanned<Block>>> "until" <cond:Spanned<Exp>> "end" => ast::Stat::RepeatUntil { block, cond },
@@ -137,7 +138,7 @@ pub Stat: ast::Stat<'src> = {
     },
     "for" <var:Spanned<"ident">> "=" <initial:Spanned<Exp>> "," <limit:Spanned<Exp>> <step:("," <Spanned<Exp>>)?> "do" <block:Box<Spanned<Block>>> "end" => {
         ast::Stat::ForNumerical {
-            var,
+            var: var.map(|x| x.into()),
             initial,
             limit,
             step,
@@ -146,7 +147,7 @@ pub Stat: ast::Stat<'src> = {
     },
     "for" <names:List<"ident">> "in" <exps:List<Exp>> "do" <block:Box<Spanned<Block>>> "end" => {
         ast::Stat::ForGeneric {
-            names,
+            names: names.map(|x| x.into_iter().map(|x| x.map(|x| x.into())).collect()),
             exps,
             block,
         }
@@ -159,7 +160,7 @@ pub Stat: ast::Stat<'src> = {
     },
     "local" "function" <name:Spanned<"ident">> <body:Spanned<FuncBody>> => {
         ast::Stat::LocalFunction {
-            name,
+            name: name.map(|x| x.into()),
             body,
         }
     },
@@ -172,7 +173,7 @@ pub Stat: ast::Stat<'src> = {
 }
 
 AttName: ast::AttName<'src> = {
-    <name:Spanned<"ident">> <attrib:("<" <Spanned<"ident">> ">")?> => ast::AttName { name, attrib },
+    <name:Spanned<"ident">> <attrib:("<" <Spanned<"ident">> ">")?> => ast::AttName { name: name.map(|x| x.into()), attrib: attrib.map(|x| x.map(|x| x.into())) },
 }
 
 CondThenBlock: (ast::Spanned<ast::Exp<'src>>, Box<ast::Spanned<ast::Block<'src>>>) = {
@@ -180,11 +181,11 @@ CondThenBlock: (ast::Spanned<ast::Exp<'src>>, Box<ast::Spanned<ast::Block<'src>>
 }
 
 pub FuncName: ast::FuncName<'src> = {
-    <path:DotList<"ident">> <method:(":" <Spanned<"ident">>)?> => ast::FuncName { path, method },
+    <path:DotList<"ident">> <method:(":" <Spanned<"ident">>)?> => ast::FuncName { path: path.map(|x| x.into_iter().map(|x| x.map(|x| x.into())).collect()), method: method.map(|x| x.map(|x| x.into())) },
 }
 
 pub Var: ast::Var<'src> = {
-    <name:Spanned<"ident">> => ast::Var::Name(name),
+    <name:Spanned<"ident">> => ast::Var::Name(name.map(|x| x.into())),
     <lhs:Box<Spanned<PrefixExp>>> "[" <idx:Box<Spanned<Exp>>> "]" => {
         ast::Var::Index {
             lhs,
@@ -194,7 +195,7 @@ pub Var: ast::Var<'src> = {
     <lhs:Box<Spanned<PrefixExp>>> "." <member:Spanned<"ident">> => {
         ast::Var::Path {
             lhs,
-            member,
+            member: member.map(|x| x.into()),
         }
     },
 }
@@ -376,8 +377,8 @@ pub FunctionCall: ast::FunctionCall<'src> = {
     <lhs:Box<Spanned<PrefixExp>>> <method:(":" <Spanned<"ident">>)?> <args:Spanned<Args>> => {
         ast::FunctionCall {
             lhs,
-            method,
-            args
+            method: method.map(|x| x.map(|x| x.into())),
+            args,
         }
     },
 }
@@ -386,14 +387,14 @@ pub Args: ast::Args<'src> = {
     "(" <x:List<Exp>> ")" => ast::Args::List(x),
 }
 
-ParamList: (Vec<ast::Spanned<&'src str>>, Option<ast::Spanned<()>>) = {
+ParamList: (Vec<ast::Spanned<Cow<'src, str>>>, Option<ast::Spanned<()>>) = {
     <Spanned<"...">> => (vec![], Some(<>.map(|_| ()))),
-    <first:Spanned<"ident">> <mut list:("," <Spanned<"ident">>)*> => {
-        list.insert(0, first);
+    <first:Spanned<"ident">> <list:("," <Spanned<"ident">>)*> => {
+        let list = core::iter::once(first).chain(list.into_iter()).map(|x| x.map(|x| x.into())).collect();
         (list, None)
     },
-    <first:Spanned<"ident">> <mut list:("," <Spanned<"ident">>)*> "," <varargs:Spanned<"...">> => {
-        list.insert(0, first);
+    <first:Spanned<"ident">> <list:("," <Spanned<"ident">>)*> "," <varargs:Spanned<"...">> => {
+        let list = core::iter::once(first).chain(list.into_iter()).map(|x| x.map(|x| x.into())).collect();
         (list, Some(varargs.map(|_| ())))
     }
 }
@@ -417,7 +418,7 @@ pub Field: ast::Field<'src> = {
     },
     <field:Spanned<"ident">> "=" <val:Box<Spanned<Exp>>> => {
         ast::Field::Named {
-            field,
+            field: field.map(|x| x.into()),
             val,
         }
     },
