@@ -630,6 +630,10 @@ impl<'ctx> LuaEngine<'ctx> {
         self.allocate_managed_value(LuaFunction::Lua(Closure { def, captures }))
     }
 
+    pub fn create_rust_function<F: LuaCallable<'ctx>>(&'ctx self, def: F) -> Value<'ctx> {
+        self.allocate_managed_value(LuaFunction::Rust(Box::new_in(def, self.alloc())))
+    }
+
     //
     fn as_string(&self, val: Value<'ctx>) -> Option<&[u8]> {
         match val.unpack() {
@@ -1004,7 +1008,7 @@ pub enum CaptureSpan<'ctx> {
 pub type Vec<'ctx, T> = alloc::vec::Vec<T, &'ctx Arena<'ctx>>;
 pub type Box<'ctx, T> = alloc::boxed::Box<T, &'ctx Arena<'ctx>>;
 
-pub trait LuaCallable<'ctx> {
+pub trait LuaCallable<'ctx>: 'ctx {
     fn call(
         &mut self,
         engine: &'ctx LuaEngine<'ctx>,
@@ -1014,7 +1018,11 @@ pub trait LuaCallable<'ctx> {
 
 impl<
     'ctx,
-    F: FnMut(&'ctx LuaEngine<'ctx>, &[Value<'ctx>]) -> Result<Vec<'ctx, Value<'ctx>>, LuaError<'ctx>>,
+    F: (FnMut(
+            &'ctx LuaEngine<'ctx>,
+            &[Value<'ctx>],
+        ) -> Result<Vec<'ctx, Value<'ctx>>, LuaError<'ctx>>)
+        + 'ctx,
 > LuaCallable<'ctx> for F
 {
     fn call(
