@@ -3,14 +3,14 @@ use alloc::alloc::Allocator;
 use bytemuck::Zeroable;
 use core::alloc::Layout;
 use core::cell::{Cell, UnsafeCell};
+use core::fmt;
 use core::hash::{Hash, Hasher};
 use core::marker::PhantomData;
 use core::mem::ManuallyDrop;
 use core::mem::MaybeUninit;
+use core::ops::ControlFlow;
 use core::ops::Deref;
 use core::ptr::NonNull;
-use std::ops::ControlFlow;
-use std::sync::atomic::AtomicUsize;
 
 use crate::engine::table::Table;
 use crate::mir;
@@ -362,14 +362,14 @@ impl<'ctx, T> PartialEq for ArenaPtr<'ctx, T> {
 
 impl<'ctx, T> Eq for ArenaPtr<'ctx, T> {}
 
-impl<'ctx, T> core::fmt::Debug for ArenaPtr<'ctx, T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<'ctx, T> fmt::Debug for ArenaPtr<'ctx, T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         core::ptr::without_provenance_mut::<T>(self.0).fmt(f)
     }
 }
 
-impl<'ctx, T> core::fmt::Pointer for ArenaPtr<'ctx, T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl<'ctx, T> fmt::Pointer for ArenaPtr<'ctx, T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         core::ptr::without_provenance_mut::<T>(self.0).fmt(f)
     }
 }

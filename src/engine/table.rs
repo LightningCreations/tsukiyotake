@@ -1,7 +1,7 @@
+use core::hash::Hash;
 use core::hash::{BuildHasher, Hasher};
 use hashbrown::HashTable;
 use lccc_siphash::build::RandomState;
-use std::hash::Hash;
 
 use crate::engine::{ArenaPtr, ArenaTy, LuaEngine, ManagedType, Type, Value};
 
