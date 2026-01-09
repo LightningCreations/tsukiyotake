@@ -57,6 +57,10 @@ impl SsaVarId {
         Self(self.0.checked_add(1).unwrap())
     }
 
+    pub const fn val(self) -> u32 {
+        self.0.get() - 1
+    }
+
     pub const _ENV: Self = Self(nz!(1));
 }
 
@@ -285,6 +289,7 @@ pub struct FunctionDef {
     pub debug_info: FunctionDebugInfo,
     pub num_upvars: u32,
     pub num_params: u32,
+    pub num_ssa: u32,
     pub variadic: bool,
     pub blocks: Vec<BasicBlock>,
 }

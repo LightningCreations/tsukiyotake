@@ -149,16 +149,16 @@ impl<'ctx> Table<'ctx> {
         }
     }
 
-    pub fn get(&mut self, engine: &'ctx LuaEngine<'ctx>, key: Value<'ctx>) -> Value<'ctx> {
+    pub fn get(&self, engine: &'ctx LuaEngine<'ctx>, key: Value<'ctx>) -> Option<Value<'ctx>> {
         if let Some(i) = key
             .as_int()
             .and_then(|x| usize::try_from(x).ok())
             .and_then(|x| isize::try_from(x).ok())
         {
             if (i as usize) < self.array_cap {
-                unsafe { self.raw.offset(-i).read().normalize() }
+                Some(unsafe { self.raw.offset(-i).read().normalize() })
             } else {
-                Value::nil()
+                None
             }
         } else {
             let hash = self.hash_one(engine, key);
@@ -169,9 +169,9 @@ impl<'ctx> Table<'ctx> {
                 })
                 .copied()
             {
-                unsafe { self.raw.add(2 * v + 1).read().normalize() }
+                Some(unsafe { self.raw.add(2 * v + 1).read().normalize() })
             } else {
-                Value::nil()
+                None
             }
         }
     }

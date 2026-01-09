@@ -1,5 +1,5 @@
 #![cfg_attr(not(feature = "std"), no_std)]
-#![feature(macro_derive, allocator_api, dropck_eyepatch)]
+#![feature(macro_derive, allocator_api, push_mut, maybe_uninit_fill, try_trait_v2)]
 
 extern crate alloc;
 

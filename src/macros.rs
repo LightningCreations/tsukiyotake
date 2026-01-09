@@ -9,3 +9,16 @@ macro_rules! nz {
         }
     };
 }
+
+macro_rules! wtry_cf {
+    ($expr:expr) => {
+        match ::core::ops::Try::branch($expr) {
+            ::core::ops::ControlFlow::Continue(__c) => __c,
+            ::core::ops::ControlFlow::Break(__b) => {
+                return ::core::ops::ControlFlow::Break(::core::ops::FromResidual::from_residual(
+                    __b,
+                ))
+            }
+        }
+    };
+}

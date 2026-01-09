@@ -162,6 +162,7 @@ impl MirConverter {
             debug_info: self.debug_info,
             num_upvars: self.num_upvars,
             num_params: self.num_params,
+            num_ssa: self.next_var.0.get(),
             variadic: self.variadic,
             blocks: self.basic_blocks,
         }
@@ -227,6 +228,7 @@ mod test {
                 },
                 num_upvars: 0,
                 num_params: 0,
+                num_ssa: 2,
                 variadic: true,
                 blocks: vec![BasicBlock {
                     id: bb!(1),

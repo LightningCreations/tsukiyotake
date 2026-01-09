@@ -5,12 +5,17 @@ use core::alloc::Layout;
 use core::cell::{Cell, UnsafeCell};
 use core::hash::{Hash, Hasher};
 use core::marker::PhantomData;
+use core::mem::ManuallyDrop;
 use core::mem::MaybeUninit;
 use core::ops::Deref;
 use core::ptr::NonNull;
+use std::ops::ControlFlow;
+use std::sync::atomic::AtomicUsize;
 
 use crate::engine::table::Table;
+use crate::mir;
 use crate::mir::FunctionDef;
+use crate::mir::Index;
 use crate::sync::RwLock;
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
@@ -526,9 +531,32 @@ pub unsafe trait ArenaTy<'ctx> {
 
 pub mod table;
 
+pub struct LuaFrame<'ctx> {
+    closure: ArenaPtr<'ctx, LuaFunction<'ctx>>,
+    current_block: usize,
+    current_instruction: usize,
+    vars: Box<'ctx, [Option<Multival<'ctx>>]>,
+    ret_val: Option<Multival<'ctx>>,
+}
+
+pub enum Multival<'ctx> {
+    Value(Value<'ctx>),
+    Multival(Vec<'ctx, Value<'ctx>>),
+}
+
+impl<'ctx> Multival<'ctx> {
+    pub fn as_slice(&self) -> &[Value<'ctx>] {
+        match self {
+            Self::Value(v) => core::slice::from_ref(v),
+            Self::Multival(v) => v,
+        }
+    }
+}
+
 pub struct LuaEngine<'ctx> {
     arena: Arena<'ctx>,
     global_env: Cell<Value<'ctx>>,
+    frames: RwLock<alloc::vec::Vec<ManuallyDrop<LuaFrame<'ctx>>>>,
 }
 
 unsafe impl<'ctx> Send for LuaEngine<'ctx> {}
@@ -558,21 +586,26 @@ impl LuaEngine<'static> {
         let engine = LuaEngine {
             arena,
             global_env: Cell::new(Value::nil()),
+            frames: RwLock::new(alloc::vec::Vec::new()),
         };
 
-        let mut table = Table::new(&engine);
+        let with_helper = move |engine, udata| {
+            let mut table = Table::new(engine);
 
-        populate_env(&mut table, &engine);
-        let table = engine.allocate_managed_value(table);
-        match table.unpack() {
-            UnpackedValue::Managed(ManagedValue::Table(t)) => unsafe {
-                (*engine.resolve_ptr(t)).insert(&engine, Value::string_literal(b"_G"), table);
-            },
-            _ => {}
-        }
-        engine.global_env.set(table);
+            populate_env(&mut table, &engine);
+            let table = engine.allocate_managed_value(table);
+            match table.unpack() {
+                UnpackedValue::Managed(ManagedValue::Table(t)) => unsafe {
+                    (*engine.resolve_ptr(t)).insert(&engine, Value::string_literal(b"_G"), table);
+                },
+                _ => {}
+            }
+            engine.global_env.set(table);
 
-        with_fn(&engine, udata)
+            with_fn(engine, udata)
+        };
+
+        with_helper(&engine, udata)
     }
 
     pub fn with<R>(
@@ -591,7 +624,7 @@ impl<'ctx> LuaEngine<'ctx> {
 
     pub fn create_closure(
         &'ctx self,
-        def: FunctionDef,
+        def: &'ctx FunctionDef,
         captures: CaptureSpan<'ctx>,
     ) -> Value<'ctx> {
         self.allocate_managed_value(LuaFunction::Lua(Closure { def, captures }))
@@ -672,6 +705,275 @@ impl<'ctx> LuaEngine<'ctx> {
             _ => false,
         }
     }
+
+    pub fn call_func(
+        &'ctx self,
+        val: ArenaPtr<'ctx, LuaFunction<'ctx>>,
+        params: &[Value<'ctx>],
+    ) -> Result<Multival<'ctx>, LuaError<'ctx>> {
+        let mut frames = self.frames.write();
+
+        let func = unsafe { &mut *(self.resolve_ptr(val)) };
+        for fr in &mut *frames {
+            if fr.closure == val && matches!(func, LuaFunction::Rust(_)) {
+                return Err(LuaError(Brand::new_unchecked()));
+            }
+        }
+
+        let frame = LuaFrame {
+            closure: val,
+            current_block: 0,
+            current_instruction: 0,
+            vars: Box::new_in([], self.alloc()),
+            ret_val: None,
+        };
+
+        let frame = frames.push_mut(ManuallyDrop::new(frame));
+
+        let mval = match func {
+            LuaFunction::Lua(closure) => {
+                let mut vars = Box::new_uninit_slice_in(closure.def.num_ssa as usize, self.alloc());
+                vars.write_with(|_| None);
+
+                let mut vars = unsafe { Box::<[MaybeUninit<_>]>::assume_init(vars) };
+
+                vars[0] = Some(Multival::Value(self.global_env.get()));
+
+                let mut params = params.iter().copied();
+
+                // todo: Upvars
+
+                let param_base = (1 + closure.def.num_upvars) as usize;
+                for (idx, param) in params
+                    .by_ref()
+                    .chain(core::iter::repeat(Value::nil()))
+                    .take(closure.def.num_params as usize)
+                    .enumerate()
+                {
+                    vars[idx + param_base] = Some(Multival::Value(param));
+                }
+
+                if closure.def.variadic {
+                    let mut vec = Vec::new_in(self.alloc());
+                    vec.extend(params);
+                    vars[param_base + (closure.def.num_params as usize)] =
+                        Some(Multival::Multival(vec));
+                }
+
+                frame.vars = vars;
+
+                drop(frames);
+
+                self.finish_frame()?
+            }
+            LuaFunction::Rust(call) => {
+                let res = call.call(self, params)?;
+
+                frames.pop();
+
+                Multival::Multival(res)
+            }
+        };
+
+        Ok(mval)
+    }
+
+    pub fn finish_frame(&'ctx self) -> Result<Multival<'ctx>, LuaError<'ctx>> {
+        let x = loop {
+            match self.step_one() {
+                ControlFlow::Continue(()) => continue,
+                ControlFlow::Break(res) => break res,
+            }
+        };
+
+        let mut frames = self.frames.write();
+
+        let frame = ManuallyDrop::into_inner(frames.pop().unwrap());
+
+        match x {
+            Ok(()) => Ok(frame.ret_val.unwrap()),
+            Err(e) => Err(e),
+        }
+    }
+
+    pub fn step_one(&'ctx self) -> ControlFlow<Result<(), LuaError<'ctx>>> {
+        let mut frames = self.frames.write();
+        let last = frames
+            .last_mut()
+            .expect("We need at least one frame to call step");
+
+        let fr = unsafe { &*self.resolve_ptr(last.closure) };
+
+        match fr {
+            LuaFunction::Lua(l) => match l.def.blocks.get(last.current_block) {
+                Some(block) => match block.stats.get(last.current_instruction) {
+                    Some(stat) => {
+                        match stat {
+                            crate::mir::Statement::Multideclare(ssa_var_ids, multival) => todo!(),
+                            crate::mir::Statement::Call(ssa_var_id, function_call) => {
+                                let val = wtry_cf!(self.eval(&function_call.base, last));
+
+                                let params = wtry_cf!(self.eval_multi(&function_call.params, last));
+
+                                match val.unpack() {
+                                    UnpackedValue::Managed(ManagedValue::Closure(cl)) => {
+                                        let ret = wtry_cf!(self.call_func(cl, params.as_slice()));
+
+                                        if let Some(var) = ssa_var_id {
+                                            last.vars[var.val() as usize] = Some(ret);
+                                        }
+                                    }
+                                    _ => {
+                                        return ControlFlow::Break(Err(
+                                            self.type_error(val.type_of(), "call")
+                                        ));
+                                    }
+                                }
+                            }
+                            crate::mir::Statement::AllocUpvar(ssa_var_id, expr) => todo!(),
+                            crate::mir::Statement::WriteUpvar(ssa_var_id, expr) => todo!(),
+                            crate::mir::Statement::Discard(expr) => todo!(),
+                            crate::mir::Statement::MarkUnused(ssa_var_id) => todo!(),
+                            crate::mir::Statement::MarkDead(ssa_var_id) => todo!(),
+                            crate::mir::Statement::WriteIndex {
+                                table,
+                                index,
+                                value,
+                            } => todo!(),
+                            crate::mir::Statement::Close(ssa_var_ids) => todo!(),
+                        }
+                        last.current_instruction += 1;
+
+                        ControlFlow::Continue(())
+                    }
+                    None => match &block.term {
+                        crate::mir::Terminator::DeferError(spanned) => {
+                            ControlFlow::Break(Err(LuaError(Brand::new_unchecked())))
+                        }
+                        crate::mir::Terminator::RtError(spanned, multival) => {
+                            ControlFlow::Break(Err(LuaError(Brand::new_unchecked())))
+                        }
+                        crate::mir::Terminator::Branch(expr, jump_target, jump_target1) => todo!(),
+                        crate::mir::Terminator::Jump(jump_target) => {
+                            last.current_instruction = 0;
+                            last.current_block = jump_target.targ_bb as usize;
+
+                            for (a, b) in &jump_target.remaps {
+                                let val = last.vars[a.val() as usize].take();
+                                last.vars[b.val() as usize] = val;
+                            }
+                            ControlFlow::Continue(())
+                        }
+                        crate::mir::Terminator::Tailcall(spanned) => todo!(),
+                        crate::mir::Terminator::Return(multival) => {
+                            let mval = match self.eval_multi(multival, last) {
+                                Ok(mval) => mval,
+                                Err(e) => return ControlFlow::Break(Err(e)),
+                            };
+
+                            last.ret_val = Some(mval);
+
+                            ControlFlow::Break(Ok(()))
+                        }
+                    },
+                },
+                None => panic!("Function already finished"),
+            },
+            _ => panic!("Cannot single step a rust frame (should not happen)"),
+        }
+    }
+
+    pub fn type_error(&self, ty: Type, op: &'ctx str) -> LuaError<'ctx> {
+        // TODO: Add defs
+        let _ = (ty, op);
+        LuaError(Brand::new_unchecked())
+    }
+
+    fn eval(
+        &'ctx self,
+        expr: &'ctx mir::Expr,
+        frame: &mut LuaFrame<'ctx>,
+    ) -> Result<Value<'ctx>, LuaError<'ctx>> {
+        match expr {
+            mir::Expr::Nil => Ok(Value::nil()),
+            mir::Expr::Var(ssa_var_id) => {
+                match frame.vars[ssa_var_id.val() as usize]
+                    .as_ref()
+                    .expect("Initialized ssa var expected")
+                {
+                    Multival::Value(val) => Ok(*val),
+                    Multival::Multival(_) => panic!("Multival not allowed"),
+                }
+            }
+            mir::Expr::ReadUpvar(ssa_var_id) => todo!(),
+            mir::Expr::Extract(multival, _) => todo!(),
+            mir::Expr::Table(table_constructor) => todo!(),
+            mir::Expr::String(items) => Ok(Value::string_literal(items)),
+            mir::Expr::Closure(closure_def) => todo!(),
+            mir::Expr::Boolean(_) => todo!(),
+            mir::Expr::Integer(_) => todo!(),
+            mir::Expr::Float(_) => todo!(),
+            mir::Expr::Index(spanned) => {
+                let base = self.eval(&spanned.0.base, frame)?;
+                let index = match &spanned.0.index {
+                    Index::Expr(expr) => self.eval(&expr, frame)?,
+                    Index::Name(name) => Value::string_literal(name.as_bytes()),
+                };
+
+                match base.unpack() {
+                    UnpackedValue::Int(_) => Err(self.type_error(Type::Int, "index")),
+                    UnpackedValue::Bool(_) => Err(self.type_error(Type::Boolean, "index")),
+                    UnpackedValue::Float(_) => Err(self.type_error(Type::Float, "index")),
+                    UnpackedValue::String(_) => {
+                        Err(self.type_error(Type::UnmanagedString, "index"))
+                    }
+                    UnpackedValue::Managed(mval) => match mval {
+                        ManagedValue::Nil => {
+                            Err(self.type_error(Type::Managed(ManagedType::NullTy), "index"))
+                        }
+                        ManagedValue::Table(tbl) => {
+                            let tbl = unsafe { &*self.resolve_ptr(tbl) };
+                            Ok(tbl.get(self, index).unwrap_or_else(Value::nil))
+                        }
+                        ManagedValue::Closure(_) => {
+                            Err(self.type_error(Type::Managed(ManagedType::Closure), "index"))
+                        }
+                        ManagedValue::String(_) => {
+                            Err(self.type_error(Type::Managed(ManagedType::ManagedString), "index"))
+                        }
+                    },
+                }
+            }
+            mir::Expr::UnaryOp(spanned) => todo!(),
+            mir::Expr::BinaryOp(spanned) => todo!(),
+        }
+    }
+
+    fn eval_multi(
+        &'ctx self,
+        mval: &'ctx mir::Multival,
+        frame: &mut LuaFrame<'ctx>,
+    ) -> Result<Multival<'ctx>, LuaError<'ctx>> {
+        match mval {
+            mir::Multival::Empty => Ok(Multival::Multival(Vec::new_in(self.alloc()))),
+            mir::Multival::FixedList(exprs) => {
+                let mut list = Vec::new_in(self.alloc());
+                exprs
+                    .iter()
+                    .map(|v| self.eval(v, frame))
+                    .try_for_each(|v| {
+                        list.push(v?);
+                        Ok(())
+                    })?;
+
+                Ok(Multival::Multival(list))
+            }
+            mir::Multival::Var { var, count } => todo!(),
+            mir::Multival::Concat(multivals) => todo!(),
+            mir::Multival::ClampSize { base, min, max } => todo!(),
+            mir::Multival::Subslice { base, start, end } => todo!(),
+        }
+    }
 }
 
 fn hash_string<H: Hasher>(x: &[u8], state: &mut H) {
@@ -681,7 +983,7 @@ fn hash_string<H: Hasher>(x: &[u8], state: &mut H) {
 }
 
 pub struct Closure<'ctx> {
-    def: FunctionDef,
+    def: &'ctx FunctionDef,
     captures: CaptureSpan<'ctx>,
 }
 
@@ -708,6 +1010,20 @@ pub trait LuaCallable<'ctx> {
         engine: &'ctx LuaEngine<'ctx>,
         params: &[Value<'ctx>],
     ) -> Result<Vec<'ctx, Value<'ctx>>, LuaError<'ctx>>;
+}
+
+impl<
+    'ctx,
+    F: FnMut(&'ctx LuaEngine<'ctx>, &[Value<'ctx>]) -> Result<Vec<'ctx, Value<'ctx>>, LuaError<'ctx>>,
+> LuaCallable<'ctx> for F
+{
+    fn call(
+        &mut self,
+        engine: &'ctx LuaEngine<'ctx>,
+        params: &[Value<'ctx>],
+    ) -> Result<Vec<'ctx, Value<'ctx>>, LuaError<'ctx>> {
+        self(engine, params)
+    }
 }
 
 pub struct LuaError<'ctx>(Brand<'ctx>); // For now
