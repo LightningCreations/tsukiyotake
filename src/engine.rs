@@ -577,17 +577,7 @@ impl LuaEngine<'static> {
         with_fn: impl for<'ctx> FnOnce(&'ctx LuaEngine<'ctx>, &'ctx T) -> R,
         populate_env: impl for<'ctx> FnOnce(&mut Table<'ctx>, &'ctx LuaEngine<'ctx>),
     ) -> R {
-        let arena_size = arena_size / size_of::<ValueBlock>();
-
-        let arena = Arena(
-            RwLock::new(ArenaInner::create_arena(arena_size)),
-            Brand::new_unchecked(),
-        );
-        let engine = LuaEngine {
-            arena,
-            global_env: Cell::new(Value::nil()),
-            frames: RwLock::new(alloc::vec::Vec::new()),
-        };
+        let engine = unsafe { LuaEngine::create_unchecked(arena_size) };
 
         let with_helper = move |engine, udata| {
             let mut table = Table::new(engine);
@@ -618,6 +608,21 @@ impl LuaEngine<'static> {
 }
 
 impl<'ctx> LuaEngine<'ctx> {
+    unsafe fn create_unchecked(arena_size: usize) -> Self {
+        let arena_size = arena_size / size_of::<ValueBlock>();
+
+        let arena = Arena(
+            RwLock::new(ArenaInner::create_arena(arena_size)),
+            Brand::new_unchecked(),
+        );
+        let engine = LuaEngine {
+            arena,
+            global_env: Cell::new(Value::nil()),
+            frames: RwLock::new(alloc::vec::Vec::new()),
+        };
+
+        engine
+    }
     pub fn alloc(&self) -> &Arena<'ctx> {
         &self.arena
     }
@@ -1035,3 +1040,55 @@ impl<
 }
 
 pub struct LuaError<'ctx>(Brand<'ctx>); // For now
+
+unsafe fn cast_lua_lifetime<'ctx, 'b>(x: &'ctx LuaEngine<'b>) -> &'ctx LuaEngine<'ctx> {
+    unsafe { core::mem::transmute(x) }
+}
+
+pub struct ErasedLuaEngine {
+    inner: LuaEngine<'static>,
+}
+
+impl ErasedLuaEngine {
+    pub fn create<
+        T: 'static,
+        F: 'static + for<'ctx> FnOnce(&'ctx LuaEngine<'ctx>, &'ctx T),
+        IE: 'static + for<'ctx> FnOnce(&mut Table<'ctx>, &'ctx LuaEngine<'ctx>),
+    >(
+        arena_size: usize,
+        udata: &'static T,
+        with_fn: F,
+        populate_env: IE,
+    ) -> ErasedLuaEngine {
+        let engine = unsafe { LuaEngine::create_unchecked(arena_size) };
+
+        let captured_engine = unsafe { core::mem::transmute(&engine) };
+
+        let mut table = Table::new(captured_engine);
+
+        populate_env(&mut table, captured_engine);
+        let table = captured_engine.allocate_managed_value(table);
+        match table.unpack() {
+            UnpackedValue::Managed(ManagedValue::Table(t)) => unsafe {
+                (*captured_engine.resolve_ptr(t)).insert(
+                    captured_engine,
+                    Value::string_literal(b"_G"),
+                    table,
+                );
+            },
+            _ => {}
+        }
+        captured_engine.global_env.set(table);
+
+        with_fn(captured_engine, udata);
+
+        ErasedLuaEngine { inner: engine }
+    }
+
+    pub fn with<R, F: 'static + for<'ctx> FnOnce(&'ctx LuaEngine<'ctx>) -> R>(
+        &self,
+        with_fn: F,
+    ) -> R {
+        with_fn(unsafe { core::mem::transmute(&self.inner) })
+    }
+}
