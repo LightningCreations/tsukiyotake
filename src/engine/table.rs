@@ -116,8 +116,7 @@ impl<'ctx> Table<'ctx> {
 
                     if let Type::Managed(ManagedType::Dead | ManagedType::NullTy) = key.type_of() {
                         if found {
-                            self.next_map_slot = n;
-                            return;
+                            break;
                         } else {
                             found = true;
                             index = n;
