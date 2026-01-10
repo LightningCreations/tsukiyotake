@@ -114,7 +114,7 @@ impl<'ctx> Table<'ctx> {
                 while n < self.map_cap {
                     let key = unsafe { self.raw.add(2 * n).read() };
 
-                    if let Type::Managed(ManagedType::Dead) = key.type_of() {
+                    if let Type::Managed(ManagedType::Dead | ManagedType::NullTy) = key.type_of() {
                         if found {
                             self.next_map_slot = n;
                             return;
