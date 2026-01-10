@@ -5,4 +5,5 @@ edition = "2024"
 default-run = "tsukiyotake-cli"
 
 [dependencies]
+clap = { version = "4", features = ["derive"] }
 tsukiyotake = { path = ".." }
