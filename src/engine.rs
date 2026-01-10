@@ -640,7 +640,7 @@ impl<'ctx> LuaEngine<'ctx> {
     }
 
     //
-    fn as_string(&self, val: Value<'ctx>) -> Option<&[u8]> {
+    pub fn as_string(&self, val: Value<'ctx>) -> Option<&[u8]> {
         match val.unpack() {
             UnpackedValue::String(s) => Some(s),
             UnpackedValue::Managed(ManagedValue::String(s)) => {

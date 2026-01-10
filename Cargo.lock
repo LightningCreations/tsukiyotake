@@ -557,6 +557,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "tsukiyotake-cli"
+version = "0.1.0"
+dependencies = [
+ "tsukiyotake",
+]
+
+[[package]]
 name = "tsukiyotake-grammar"
 version = "0.1.0"
 dependencies = [

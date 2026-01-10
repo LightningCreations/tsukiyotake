@@ -1,5 +1,5 @@
 [workspace]
-members = ["grammar"]
+members = ["grammar", "cli"]
 package.version = "0.1.0"
 package.edition = "2024"
 
