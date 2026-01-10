@@ -452,12 +452,8 @@ impl<'ctx> Arena<'ctx> {
         let raw = self.allocate(Layout::new::<T>())?.cast::<T>();
 
         let ptr = unsafe {
-            self.0
-                .read()
-                .x
-                .as_ptr()
-                .cast::<T>()
-                .byte_offset_from_unsigned(raw.as_ptr())
+            raw.as_ptr()
+                .byte_offset_from_unsigned(self.0.read().x.as_ptr().cast::<T>())
         };
         debug_assert!((ptr & 31) == 0);
         unsafe {
