@@ -436,6 +436,7 @@ impl Drop for ArenaInner {
     }
 }
 
+#[repr(C)]
 struct AllocMetadata {
     head_size: usize,
     next_block: usize,
