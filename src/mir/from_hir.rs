@@ -1,4 +1,5 @@
-use alloc::borrow::ToOwned;
+use alloc::format;
+use alloc::vec;
 use hashbrown::HashMap;
 
 use crate::{bb, hir, mir::*};
@@ -104,39 +105,134 @@ impl MirConverter {
         }
     }
 
-    fn convert_exp(&mut self, exp: &hir::Exp) -> Expr {
-        match exp {
+    fn convert_exp(&mut self, exp: Spanned<&hir::Exp>) -> Expr {
+        match exp.0 {
+            hir::Exp::NumeralInt(x) => Expr::Integer(x.0),
             hir::Exp::LiteralString(x) => Expr::String(x.0.clone().to_vec()), // TODO: why doesn't the MIR use Box<u8>?
             hir::Exp::Var(x) => match &**x {
                 hir::Var::Name(x) => Expr::Var(self.get_var(&**x)),
                 hir::Var::Path { lhs, field } => {
-                    let lhs = self.convert_exp(&**lhs);
+                    let lhs = self.convert_exp((**lhs).as_ref());
                     Expr::Index(x.as_ref().map(|_| IndexExpr {
                         base: Box::new(lhs),
                         index: Index::Name(field.0.clone().into_owned()),
                     }))
                 }
                 hir::Var::Index { lhs, idx } => {
-                    let lhs = self.convert_exp(&**lhs);
-                    let idx = self.convert_exp(&**idx);
+                    let lhs = self.convert_exp((**lhs).as_ref());
+                    let idx = self.convert_exp((**idx).as_ref());
                     Expr::Index(x.as_ref().map(|_| IndexExpr {
                         base: Box::new(lhs),
                         index: Index::Expr(Box::new(idx)),
                     }))
                 }
             },
+            hir::Exp::TableConstructor {
+                hash_part,
+                array_part,
+            } => Expr::Table(TableConstructor {
+                hash_part: hash_part
+                    .iter()
+                    .map(|(index, exp)| {
+                        (
+                            match index {
+                                hir::Index::Name(name) => Index::Name(name.clone().into()),
+                                hir::Index::Exp(exp) => {
+                                    Index::Expr(Box::new(self.convert_exp(exp.as_ref())))
+                                }
+                            },
+                            self.convert_exp(exp.as_ref()),
+                        )
+                    })
+                    .collect(),
+                array_part: Box::new(self.convert_list(array_part)),
+            }),
+            hir::Exp::BinExp { lhs, op, rhs } => Expr::BinaryOp(Spanned(
+                BinaryExpr {
+                    op: *op,
+                    left: Box::new(self.convert_exp((**lhs).as_ref())),
+                    right: Box::new(self.convert_exp((**rhs).as_ref())),
+                },
+                exp.1,
+            )),
             x => todo!("{x:?}"),
         }
     }
 
-    fn write_stat(&mut self, stat: &hir::Stat) {
-        match stat {
-            hir::Stat::FunctionCall(x) => {
-                let lhs = self.convert_exp(&x.lhs);
+    fn convert_exp_multival(&mut self, exp: Spanned<&hir::Exp>) -> Multival {
+        match exp.0 {
+            hir::Exp::FunctionCall(_) => todo!(),
+            _ => Multival::FixedList(vec![self.convert_exp(exp)]),
+        }
+    }
 
-                // TODO: this... this doesn't handle multires correctly, does it.
-                let params =
-                    Multival::FixedList(x.args.iter().map(|x| self.convert_exp(&x)).collect());
+    fn convert_list(&mut self, exps: &[Spanned<hir::Exp>]) -> Multival {
+        let Some((last, first)) = exps.split_last() else {
+            return Multival::Empty;
+        };
+        let first = first.iter().map(|x| self.convert_exp(x.as_ref())).collect();
+        let last = self.convert_exp_multival(last.as_ref());
+        Multival::Concat(vec![Multival::FixedList(first), last])
+    }
+
+    fn write_stat(&mut self, stat: Spanned<&hir::Stat>) {
+        match stat.0 {
+            hir::Stat::Assign { vars, exps } => {
+                // Figure out what assignments we need to make first
+                let targets: Vec<_> = vars
+                    .iter()
+                    .map(|x| match &x.0 {
+                        hir::Var::Name(_) => None,
+                        hir::Var::Index { lhs, idx } => Some((
+                            self.convert_exp((**lhs).as_ref()),
+                            Index::Expr(Box::new(self.convert_exp((**idx).as_ref()))),
+                            x.1.clone(),
+                        )),
+                        hir::Var::Path { lhs, field } => Some((
+                            self.convert_exp((**lhs).as_ref()),
+                            Index::Name(field.0.clone().into_owned()),
+                            x.1.clone(),
+                        )),
+                    })
+                    .collect();
+                // Then, generate the result
+                let result = self.convert_list(exps);
+                // Then, generate the list of (temporary or otherwise) variables assigned to
+                let vars: Vec<_> = vars
+                    .iter()
+                    .enumerate()
+                    .map(|(i, x)| {
+                        if let hir::Var::Name(x) = &**x {
+                            self.add_var(x.as_ref().map(|x| x.clone().into_owned()))
+                        } else {
+                            self.add_var(Spanned::synth(format!(
+                                "<temporary assignment index {i}>"
+                            )))
+                        }
+                    })
+                    .collect();
+                // Then, generate the actual assignment statement
+                self.cur_block.push(Spanned(
+                    Statement::Multideclare(vars.clone(), result),
+                    stat.1,
+                ));
+                // Finally, write any temporary variables to their correct targets
+                for (i, target) in targets.into_iter().enumerate() {
+                    if let Some((table, index, span)) = target {
+                        self.cur_block.push(Spanned(
+                            Statement::WriteIndex {
+                                table,
+                                index,
+                                value: Expr::Var(vars[i]),
+                            },
+                            span,
+                        ));
+                    }
+                }
+            }
+            hir::Stat::FunctionCall(x) => {
+                let lhs = self.convert_exp((*x.lhs).as_ref());
+                let params = self.convert_list(&x.args);
 
                 self.cur_block.push(Spanned(
                     Statement::Call(None, FunctionCall { base: lhs, params }),
@@ -150,7 +246,7 @@ impl MirConverter {
     fn write_block_inner(&mut self, block_id: BasicBlockId, block: &hir::Block) {
         self.cur_block.id = block_id;
         for stat in &block.stats {
-            self.write_stat(&stat);
+            self.write_stat(stat.as_ref());
         }
         self.basic_blocks.push(self.cur_block.finish_and_reset());
     }

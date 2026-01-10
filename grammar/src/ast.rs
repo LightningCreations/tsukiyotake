@@ -489,7 +489,7 @@ impl fmt::Display for Field<'_> {
 }
 
 // most names are based on the related metatable function
-#[derive(Clone, Debug, PartialEq, Hash, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Hash, Eq)]
 pub enum BinOp {
     Add,
     Sub,
@@ -543,7 +543,7 @@ impl fmt::Display for BinOp {
 }
 
 // most names are based on the related metatable function
-#[derive(Clone, Debug, PartialEq, Hash, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Hash, Eq)]
 pub enum UnOp {
     Unm,
     Not, // keyword/boolean

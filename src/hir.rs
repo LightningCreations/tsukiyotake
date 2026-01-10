@@ -81,6 +81,12 @@ pub enum Var<'src> {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+pub enum Index<'src> {
+    Name(Cow<'src, str>),
+    Exp(Spanned<Exp<'src>>),
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub enum Exp<'src> {
     Nil,
     False,
@@ -90,7 +96,10 @@ pub enum Exp<'src> {
     LiteralString(Spanned<Box<[u8]>>),
     VarArg,
     FunctionDef(Spanned<FuncBody<'src>>),
-    TableConstructor,
+    TableConstructor {
+        hash_part: Vec<(Index<'src>, Spanned<Exp<'src>>)>,
+        array_part: Vec<Spanned<Exp<'src>>>,
+    },
     BinExp {
         lhs: Box<Spanned<Exp<'src>>>,
         op: BinOp,
@@ -166,7 +175,15 @@ impl HirConversionContext {
     ) -> Vec<Spanned<Stat<'src>>> {
         match &*ast {
             ast::Stat::Empty => vec![],
-            ast::Stat::Assign { vars, exps } => todo!(),
+            ast::Stat::Assign { vars, exps } => {
+                let vars = vars
+                    .as_ref()
+                    .map(|x| x.iter().map(|x| self.convert_var(x.as_ref())).collect());
+                let exps = exps
+                    .as_ref()
+                    .map(|x| x.iter().map(|x| self.convert_exp(x.as_ref())).collect());
+                vec![Spanned(Stat::Assign { vars, exps }, ast.1)]
+            }
             ast::Stat::FunctionCall(call) => {
                 let call = call.as_ref();
                 // Needs to be handled specially; just about every possible function call scenario is different.
@@ -262,24 +279,57 @@ impl HirConversionContext {
                     }
                 }
             }
-            ast::Var::Index { lhs, idx } => todo!(),
+            ast::Var::Index { lhs, idx } => Var::Index {
+                lhs: Box::new(self.convert_prefix_exp((**lhs).as_ref())),
+                idx: Box::new(self.convert_exp((**idx).as_ref())),
+            },
             ast::Var::Path { lhs, member } => todo!(),
         })
     }
 
     pub fn convert_exp<'src>(&mut self, ast: Spanned<&ast::Exp<'src>>) -> Spanned<Exp<'src>> {
         ast.map(|x| match x {
-            ast::Exp::Nil => todo!(),
-            ast::Exp::False => todo!(),
-            ast::Exp::True => todo!(),
-            ast::Exp::NumeralInt(spanned) => todo!(),
-            ast::Exp::NumeralFloat(spanned) => todo!(),
+            ast::Exp::Nil => Exp::Nil,
+            ast::Exp::False => Exp::False,
+            ast::Exp::True => Exp::True,
+            ast::Exp::NumeralInt(x) => Exp::NumeralInt(x.clone()),
+            ast::Exp::NumeralFloat(x) => Exp::NumeralFloat(x.clone()),
             ast::Exp::LiteralString(x) => Exp::LiteralString(x.clone()),
-            ast::Exp::VarArg => todo!(),
+            ast::Exp::VarArg => Exp::VarArg,
             ast::Exp::FunctionDef(spanned) => todo!(),
-            ast::Exp::PrefixExp(spanned) => todo!(),
-            ast::Exp::TableConstructor(spanned) => todo!(),
-            ast::Exp::BinExp { lhs, op, rhs } => todo!(),
+            ast::Exp::PrefixExp(x) => self.convert_prefix_exp(x.as_ref()).0,
+            ast::Exp::TableConstructor(x) => {
+                let mut hash_part = Vec::new();
+                let mut array_part = Vec::new();
+                for field in &**x {
+                    match &**field {
+                        ast::Field::Exp { field, val } => {
+                            hash_part.push((
+                                Index::Exp(self.convert_exp((**field).as_ref())),
+                                self.convert_exp((**val).as_ref()),
+                            ));
+                        }
+                        ast::Field::Named { field, val } => {
+                            hash_part.push((
+                                Index::Name(field.0.clone()),
+                                self.convert_exp((**val).as_ref()),
+                            ));
+                        }
+                        ast::Field::Unnamed { val } => {
+                            array_part.push(self.convert_exp((**val).as_ref()));
+                        }
+                    }
+                }
+                Exp::TableConstructor {
+                    hash_part,
+                    array_part,
+                }
+            }
+            ast::Exp::BinExp { lhs, op, rhs } => Exp::BinExp {
+                lhs: Box::new(self.convert_exp((**lhs).as_ref())),
+                op: *op,
+                rhs: Box::new(self.convert_exp((**rhs).as_ref())),
+            },
             ast::Exp::UnExp { op, rhs } => todo!(),
         })
     }
@@ -321,11 +371,7 @@ impl HirConversionContext {
 
     fn descend(&self) -> Self {
         Self {
-            parent_locals: self
-                .parent_locals
-                .union(&self.locals)
-                .map(|x| x.clone())
-                .collect(),
+            parent_locals: self.parent_locals.union(&self.locals).cloned().collect(),
             import_locals: HashSet::new(),
             locals: self.locals.clone(),
             synthetic_counter: self.synthetic_counter.clone(),

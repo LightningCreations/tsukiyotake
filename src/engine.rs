@@ -654,7 +654,7 @@ impl<'ctx> LuaEngine<'ctx> {
 
     pub fn raw_hash<H: Hasher>(&self, val: Value<'ctx>, state: &mut H) {
         use core::hash::Hash;
-        let ty = val.type_of();
+        let ty = val.type_of(); // FIXME: Unify string types
 
         core::mem::discriminant(&ty).hash(state);
 
