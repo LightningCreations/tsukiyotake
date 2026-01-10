@@ -1,5 +1,6 @@
 use alloc::alloc::AllocError;
 use alloc::alloc::Allocator;
+use alloc::sync::Arc;
 use bytemuck::Zeroable;
 use core::alloc::Layout;
 use core::cell::OnceCell;
@@ -556,7 +557,7 @@ impl<'ctx> Multival<'ctx> {
 pub struct LuaEngine<'ctx> {
     arena: Arena<'ctx>,
     global_env: Cell<Value<'ctx>>,
-    frames: RwLock<alloc::vec::Vec<ManuallyDrop<LuaFrame<'ctx>>>>,
+    frames: RwLock<alloc::vec::Vec<Arc<ManuallyDrop<LuaFrame<'ctx>>>>>,
 }
 
 unsafe impl<'ctx> Send for LuaEngine<'ctx> {}
@@ -737,7 +738,7 @@ impl<'ctx> LuaEngine<'ctx> {
             ret_val: Cell::new(None),
         };
 
-        let frame = frames.push_mut(ManuallyDrop::new(frame));
+        let frame = frames.push_mut(Arc::new(ManuallyDrop::new(frame)));
 
         let mval = match func {
             LuaFunction::Lua(closure) => {
@@ -769,7 +770,7 @@ impl<'ctx> LuaEngine<'ctx> {
                         OnceCell::from(Multival::Multival(vec));
                 }
 
-                frame.vars = vars;
+                Arc::get_mut(frame).unwrap().vars = vars;
 
                 drop(frames);
 
@@ -797,7 +798,7 @@ impl<'ctx> LuaEngine<'ctx> {
 
         let mut frames = self.frames.write();
 
-        let frame = ManuallyDrop::into_inner(frames.pop().unwrap());
+        let frame = ManuallyDrop::into_inner(Arc::into_inner(frames.pop().unwrap()).unwrap());
 
         match x {
             Ok(()) => Ok(frame.ret_val.into_inner().unwrap()),
@@ -806,10 +807,12 @@ impl<'ctx> LuaEngine<'ctx> {
     }
 
     pub fn step_one(&'ctx self) -> ControlFlow<Result<(), LuaError<'ctx>>> {
-        let mut frames = self.frames.read();
+        let frames = self.frames.read();
         let last = frames
             .last()
             .expect("We need at least one frame to call step");
+        let last = last.clone();
+        drop(frames);
 
         let fr = unsafe { &*self.resolve_ptr(last.closure) };
 
@@ -820,9 +823,9 @@ impl<'ctx> LuaEngine<'ctx> {
                         match &**stat {
                             crate::mir::Statement::Multideclare(ssa_var_ids, multival) => todo!(),
                             crate::mir::Statement::Call(ssa_var_id, function_call) => {
-                                let val = wtry_cf!(self.eval(&function_call.base, last));
+                                let val = wtry_cf!(self.eval(&function_call.base, &last));
 
-                                let params = wtry_cf!(self.eval_multi(&function_call.params, last));
+                                let params = wtry_cf!(self.eval_multi(&function_call.params, &last));
 
                                 match val.unpack() {
                                     UnpackedValue::Managed(ManagedValue::Closure(cl)) => {
@@ -869,13 +872,13 @@ impl<'ctx> LuaEngine<'ctx> {
 
                             for (a, b) in &jump_target.remaps {
                                 let val = last.vars[a.val() as usize].get().cloned().unwrap();
-                                last.vars[b.val() as usize].set(val);
+                                last.vars[b.val() as usize].set(val).ok().unwrap(); // TODO: Print repr of Value and make this make sense
                             }
                             ControlFlow::Continue(())
                         }
                         crate::mir::Terminator::Tailcall(spanned) => todo!(),
                         crate::mir::Terminator::Return(multival) => {
-                            let mval = match self.eval_multi(multival, last) {
+                            let mval = match self.eval_multi(multival, &last) {
                                 Ok(mval) => mval,
                                 Err(e) => return ControlFlow::Break(Err(e)),
                             };
