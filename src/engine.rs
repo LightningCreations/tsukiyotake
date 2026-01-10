@@ -935,11 +935,11 @@ impl<'ctx> LuaEngine<'ctx> {
         LuaError { msg: val, bt }
     }
 
-    pub fn debug_error(&'ctx self, err: LuaError<'ctx>) -> impl core::fmt::Debug + 'ctx {
+    pub fn debug_error(&'ctx self, err: LuaError<'ctx>) -> impl fmt::Debug + 'ctx {
         struct DebugError<'ctx>(&'ctx LuaEngine<'ctx>, LuaError<'ctx>);
 
-        impl<'ctx> core::fmt::Debug for DebugError<'ctx> {
-            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        impl<'ctx> fmt::Debug for DebugError<'ctx> {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 let val = match self.0.as_string(self.1.msg) {
                     Some(msg) => msg,
                     None => b"<non-string-value>",
@@ -1110,8 +1110,8 @@ pub struct LuaError<'ctx> {
 
 pub struct DebugAsStr<'a>(&'a [u8]);
 
-impl core::fmt::Debug for DebugAsStr<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl fmt::Debug for DebugAsStr<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut s = self.0;
 
         f.write_str("\"")?;

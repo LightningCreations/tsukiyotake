@@ -73,5 +73,8 @@ fn run_file<'ctx>(engine: &'ctx LuaEngine<'ctx>, mir: &'ctx FunctionDef) {
     let UnpackedValue::Managed(ManagedValue::Closure(func)) = func.unpack() else {
         unreachable!()
     };
-    engine.call_func(func, &[]).ok().unwrap();
+    match engine.call_func(func, &[]) {
+        Ok(_) => {}
+        Err(e) => eprintln!("{:?}", engine.debug_error(e)),
+    }
 }
