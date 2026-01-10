@@ -2,6 +2,7 @@ use alloc::alloc::AllocError;
 use alloc::alloc::Allocator;
 use bytemuck::Zeroable;
 use core::alloc::Layout;
+use core::cell::OnceCell;
 use core::cell::{Cell, UnsafeCell};
 use core::fmt;
 use core::hash::{Hash, Hasher};
@@ -530,12 +531,13 @@ pub mod table;
 
 pub struct LuaFrame<'ctx> {
     closure: ArenaPtr<'ctx, LuaFunction<'ctx>>,
-    current_block: usize,
-    current_instruction: usize,
-    vars: Box<'ctx, [Option<Multival<'ctx>>]>,
-    ret_val: Option<Multival<'ctx>>,
+    current_block: Cell<usize>,
+    current_instruction: Cell<usize>,
+    vars: Box<'ctx, [OnceCell<Multival<'ctx>>]>,
+    ret_val: Cell<Option<Multival<'ctx>>>,
 }
 
+#[derive(Clone)]
 pub enum Multival<'ctx> {
     Value(Value<'ctx>),
     Multival(Vec<'ctx, Value<'ctx>>),
@@ -728,10 +730,10 @@ impl<'ctx> LuaEngine<'ctx> {
 
         let frame = LuaFrame {
             closure: val,
-            current_block: 0,
-            current_instruction: 0,
+            current_block: Cell::new(0),
+            current_instruction: Cell::new(0),
             vars: Box::new_in([], self.alloc()),
-            ret_val: None,
+            ret_val: Cell::new(None),
         };
 
         let frame = frames.push_mut(ManuallyDrop::new(frame));
@@ -739,11 +741,11 @@ impl<'ctx> LuaEngine<'ctx> {
         let mval = match func {
             LuaFunction::Lua(closure) => {
                 let mut vars = Box::new_uninit_slice_in(closure.def.num_ssa as usize, self.alloc());
-                vars.write_with(|_| None);
+                vars.write_with(|_| OnceCell::new());
 
                 let mut vars = unsafe { Box::<[MaybeUninit<_>]>::assume_init(vars) };
 
-                vars[0] = Some(Multival::Value(self.global_env.get()));
+                vars[0] = OnceCell::from(Multival::Value(self.global_env.get()));
 
                 let mut params = params.iter().copied();
 
@@ -756,14 +758,14 @@ impl<'ctx> LuaEngine<'ctx> {
                     .take(closure.def.num_params as usize)
                     .enumerate()
                 {
-                    vars[idx + param_base] = Some(Multival::Value(param));
+                    vars[idx + param_base] = OnceCell::from(Multival::Value(param));
                 }
 
                 if closure.def.variadic {
                     let mut vec = Vec::new_in(self.alloc());
                     vec.extend(params);
                     vars[param_base + (closure.def.num_params as usize)] =
-                        Some(Multival::Multival(vec));
+                        OnceCell::from(Multival::Multival(vec));
                 }
 
                 frame.vars = vars;
@@ -797,22 +799,22 @@ impl<'ctx> LuaEngine<'ctx> {
         let frame = ManuallyDrop::into_inner(frames.pop().unwrap());
 
         match x {
-            Ok(()) => Ok(frame.ret_val.unwrap()),
+            Ok(()) => Ok(frame.ret_val.into_inner().unwrap()),
             Err(e) => Err(e),
         }
     }
 
     pub fn step_one(&'ctx self) -> ControlFlow<Result<(), LuaError<'ctx>>> {
-        let mut frames = self.frames.write();
+        let mut frames = self.frames.read();
         let last = frames
-            .last_mut()
+            .last()
             .expect("We need at least one frame to call step");
 
         let fr = unsafe { &*self.resolve_ptr(last.closure) };
 
         match fr {
-            LuaFunction::Lua(l) => match l.def.blocks.get(last.current_block) {
-                Some(block) => match block.stats.get(last.current_instruction) {
+            LuaFunction::Lua(l) => match l.def.blocks.get(last.current_block.get()) {
+                Some(block) => match block.stats.get(last.current_instruction.get()) {
                     Some(stat) => {
                         match &**stat {
                             crate::mir::Statement::Multideclare(ssa_var_ids, multival) => todo!(),
@@ -826,7 +828,7 @@ impl<'ctx> LuaEngine<'ctx> {
                                         let ret = wtry_cf!(self.call_func(cl, params.as_slice()));
 
                                         if let Some(var) = ssa_var_id {
-                                            last.vars[var.val() as usize] = Some(ret);
+                                            last.vars[var.val() as usize].set(ret);
                                         }
                                     }
                                     _ => {
@@ -848,7 +850,7 @@ impl<'ctx> LuaEngine<'ctx> {
                             } => todo!(),
                             crate::mir::Statement::Close(ssa_var_ids) => todo!(),
                         }
-                        last.current_instruction += 1;
+                        last.current_instruction.update(|v| v + 1);
 
                         ControlFlow::Continue(())
                     }
@@ -861,12 +863,12 @@ impl<'ctx> LuaEngine<'ctx> {
                         ),
                         crate::mir::Terminator::Branch(expr, jump_target, jump_target1) => todo!(),
                         crate::mir::Terminator::Jump(jump_target) => {
-                            last.current_instruction = 0;
-                            last.current_block = jump_target.targ_bb as usize;
+                            last.current_instruction.set(0);
+                            last.current_block.set(jump_target.targ_bb as usize);
 
                             for (a, b) in &jump_target.remaps {
-                                let val = last.vars[a.val() as usize].take();
-                                last.vars[b.val() as usize] = val;
+                                let val = last.vars[a.val() as usize].get().cloned().unwrap();
+                                last.vars[b.val() as usize].set(val);
                             }
                             ControlFlow::Continue(())
                         }
@@ -877,7 +879,7 @@ impl<'ctx> LuaEngine<'ctx> {
                                 Err(e) => return ControlFlow::Break(Err(e)),
                             };
 
-                            last.ret_val = Some(mval);
+                            last.ret_val.set(Some(mval));
 
                             ControlFlow::Break(Ok(()))
                         }
@@ -904,8 +906,8 @@ impl<'ctx> LuaEngine<'ctx> {
 
             let frame = match unsafe { &*ptr } {
                 LuaFunction::Lua(closure) => {
-                    let block = f.current_block;
-                    let instr = f.current_instruction;
+                    let block = f.current_block.get();
+                    let instr = f.current_instruction.get();
                     let span = match closure.def.blocks.get(block) {
                         Some(v) => match v.stats.get(instr) {
                             Some(stmt) => &stmt.1,
@@ -957,13 +959,13 @@ impl<'ctx> LuaEngine<'ctx> {
     fn eval(
         &'ctx self,
         expr: &'ctx mir::Expr,
-        frame: &mut LuaFrame<'ctx>,
+        frame: &LuaFrame<'ctx>,
     ) -> Result<Value<'ctx>, LuaError<'ctx>> {
         match expr {
             mir::Expr::Nil => Ok(Value::nil()),
             mir::Expr::Var(ssa_var_id) => {
                 match frame.vars[ssa_var_id.val() as usize]
-                    .as_ref()
+                    .get()
                     .expect("Initialized ssa var expected")
                 {
                     Multival::Value(val) => Ok(*val),
@@ -1017,7 +1019,7 @@ impl<'ctx> LuaEngine<'ctx> {
     fn eval_multi(
         &'ctx self,
         mval: &'ctx mir::Multival,
-        frame: &mut LuaFrame<'ctx>,
+        frame: &LuaFrame<'ctx>,
     ) -> Result<Multival<'ctx>, LuaError<'ctx>> {
         match mval {
             mir::Multival::Empty => Ok(Multival::Multival(Vec::new_in(self.alloc()))),
