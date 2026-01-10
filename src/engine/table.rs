@@ -108,7 +108,7 @@ impl<'ctx> Table<'ctx> {
                 unsafe { self.raw.add(2 * data + 1).write(value) };
             } else {
                 let mut n = self.next_map_slot;
-                let mut found = true;
+                let mut found = false;
                 let mut index = 0;
 
                 while n < self.map_cap {

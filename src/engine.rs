@@ -1122,7 +1122,7 @@ impl fmt::Debug for DebugAsStr<'_> {
 
         loop {
             match core::str::from_utf8(s) {
-                Ok(s) => break s.escape_debug().fmt(f)?,
+                Ok(s) => break f.write_fmt(format_args!("{}", s.escape_debug()))?,
                 Err(e) => {
                     let v = e.valid_up_to();
 
@@ -1130,7 +1130,7 @@ impl fmt::Debug for DebugAsStr<'_> {
                     // Safety: per e.valid_up_to()
                     let begin = unsafe { core::str::from_utf8_unchecked(v) };
 
-                    begin.escape_debug().fmt(f)?;
+                    f.write_fmt(format_args!("{}", begin.escape_debug()))?;
 
                     let (mid, rest) = e
                         .error_len()
