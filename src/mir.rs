@@ -303,6 +303,6 @@ pub struct FunctionDebugInfo {
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct BasicBlock {
     pub id: BasicBlockId,
-    pub stats: Vec<Statement>,
-    pub term: Terminator,
+    pub stats: Vec<Spanned<Statement>>,
+    pub term: Spanned<Terminator>,
 }

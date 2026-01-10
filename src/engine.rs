@@ -11,6 +11,7 @@ use core::mem::MaybeUninit;
 use core::ops::ControlFlow;
 use core::ops::Deref;
 use core::ptr::NonNull;
+use tsukiyotake_grammar::Span;
 
 use crate::engine::table::Table;
 use crate::mir;
@@ -721,7 +722,7 @@ impl<'ctx> LuaEngine<'ctx> {
         let func = unsafe { &mut *(self.resolve_ptr(val)) };
         for fr in &mut *frames {
             if fr.closure == val && matches!(func, LuaFunction::Rust(_)) {
-                return Err(LuaError(Brand::new_unchecked()));
+                return Err(self.error(Value::string_literal(b"Cannot reenter rust functions")));
             }
         }
 
@@ -813,7 +814,7 @@ impl<'ctx> LuaEngine<'ctx> {
             LuaFunction::Lua(l) => match l.def.blocks.get(last.current_block) {
                 Some(block) => match block.stats.get(last.current_instruction) {
                     Some(stat) => {
-                        match stat {
+                        match &**stat {
                             crate::mir::Statement::Multideclare(ssa_var_ids, multival) => todo!(),
                             crate::mir::Statement::Call(ssa_var_id, function_call) => {
                                 let val = wtry_cf!(self.eval(&function_call.base, last));
@@ -851,13 +852,13 @@ impl<'ctx> LuaEngine<'ctx> {
 
                         ControlFlow::Continue(())
                     }
-                    None => match &block.term {
-                        crate::mir::Terminator::DeferError(spanned) => {
-                            ControlFlow::Break(Err(LuaError(Brand::new_unchecked())))
-                        }
-                        crate::mir::Terminator::RtError(spanned, multival) => {
-                            ControlFlow::Break(Err(LuaError(Brand::new_unchecked())))
-                        }
+                    None => match &*block.term {
+                        crate::mir::Terminator::DeferError(spanned) => ControlFlow::Break(Err(
+                            self.error(Value::string_literal(spanned.as_bytes())),
+                        )),
+                        crate::mir::Terminator::RtError(spanned, multival) => ControlFlow::Break(
+                            Err(self.error(Value::string_literal(spanned.as_bytes()))),
+                        ),
                         crate::mir::Terminator::Branch(expr, jump_target, jump_target1) => todo!(),
                         crate::mir::Terminator::Jump(jump_target) => {
                             last.current_instruction = 0;
@@ -888,10 +889,67 @@ impl<'ctx> LuaEngine<'ctx> {
         }
     }
 
-    pub fn type_error(&self, ty: Type, op: &'ctx str) -> LuaError<'ctx> {
+    pub fn type_error(&'ctx self, ty: Type, op: &'ctx str) -> LuaError<'ctx> {
         // TODO: Add defs
         let _ = (ty, op);
-        LuaError(Brand::new_unchecked())
+        self.error(Value::string_literal(b"Type error on operation"))
+    }
+
+    fn capture_backtrace(&'ctx self) -> Vec<'ctx, BacktraceFrame<'ctx>> {
+        let frames = self.frames.read();
+        let mut bt = Vec::with_capacity_in(frames.len(), self.alloc());
+
+        for f in &*frames {
+            let ptr = self.resolve_ptr(f.closure);
+
+            let frame = match unsafe { &*ptr } {
+                LuaFunction::Lua(closure) => {
+                    let block = f.current_block;
+                    let instr = f.current_instruction;
+                    let span = match closure.def.blocks.get(block) {
+                        Some(v) => match v.stats.get(instr) {
+                            Some(stmt) => &stmt.1,
+                            None => &v.term.1,
+                        },
+                        None => &closure.def.debug_info.function_canon_name.1,
+                    };
+                    BacktraceFrame {
+                        fn_name: &closure.def.debug_info.function_canon_name.0,
+                        span: Some(span),
+                    }
+                }
+                LuaFunction::Rust(rust_fn) => BacktraceFrame {
+                    fn_name: rust_fn.name(),
+                    span: None,
+                },
+            };
+
+            bt.push(frame)
+        }
+
+        bt
+    }
+
+    pub fn error(&'ctx self, val: Value<'ctx>) -> LuaError<'ctx> {
+        let bt = self.capture_backtrace();
+        LuaError { msg: val, bt }
+    }
+
+    pub fn debug_error(&'ctx self, err: LuaError<'ctx>) -> impl core::fmt::Debug + 'ctx {
+        struct DebugError<'ctx>(&'ctx LuaEngine<'ctx>, LuaError<'ctx>);
+
+        impl<'ctx> core::fmt::Debug for DebugError<'ctx> {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                let val = match self.0.as_string(self.1.msg) {
+                    Some(msg) => msg,
+                    None => b"<non-string-value>",
+                };
+                f.debug_struct("LuaError")
+                    .field("message", &DebugAsStr(val))
+                    .field("backtrace", &self.1.bt)
+                    .finish_non_exhaustive()
+            }
+        }
     }
 
     fn eval(
@@ -1001,6 +1059,12 @@ unsafe impl<'ctx> ArenaTy<'ctx> for LuaFunction<'ctx> {
     const TY: ManagedType = ManagedType::Closure;
 }
 
+#[derive(Debug)]
+pub struct BacktraceFrame<'ctx> {
+    fn_name: &'ctx str,
+    span: Option<&'ctx Span>,
+}
+
 pub enum CaptureSpan<'ctx> {
     Direct(Vec<'ctx, Value<'ctx>>),
     Indirect(Vec<'ctx, CaptureSpan<'ctx>>),
@@ -1015,6 +1079,10 @@ pub trait LuaCallable<'ctx>: 'ctx {
         engine: &'ctx LuaEngine<'ctx>,
         params: &[Value<'ctx>],
     ) -> Result<Vec<'ctx, Value<'ctx>>, LuaError<'ctx>>;
+
+    fn name(&self) -> &'ctx str {
+        core::any::type_name::<Self>()
+    }
 }
 
 impl<
@@ -1035,7 +1103,47 @@ impl<
     }
 }
 
-pub struct LuaError<'ctx>(Brand<'ctx>); // For now
+pub struct LuaError<'ctx> {
+    msg: Value<'ctx>,
+    bt: Vec<'ctx, BacktraceFrame<'ctx>>,
+} // For now
+
+pub struct DebugAsStr<'a>(&'a [u8]);
+
+impl core::fmt::Debug for DebugAsStr<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut s = self.0;
+
+        f.write_str("\"")?;
+
+        loop {
+            match core::str::from_utf8(s) {
+                Ok(s) => break s.escape_debug().fmt(f)?,
+                Err(e) => {
+                    let v = e.valid_up_to();
+
+                    let (v, rest) = s.split_at(v);
+                    // Safety: per e.valid_up_to()
+                    let begin = unsafe { core::str::from_utf8_unchecked(v) };
+
+                    begin.escape_debug().fmt(f)?;
+
+                    let (mid, rest) = e
+                        .error_len()
+                        .map(|v| rest.split_at(v))
+                        .unwrap_or((rest, &[]));
+                    s = rest;
+
+                    for b in mid {
+                        f.write_fmt(format_args!("\\x{b:02x}"))?;
+                    }
+                }
+            }
+        }
+
+        f.write_str("\"")
+    }
+}
 
 unsafe fn cast_lua_lifetime<'ctx, 'b>(x: &'ctx LuaEngine<'b>) -> &'ctx LuaEngine<'ctx> {
     unsafe { core::mem::transmute(x) }

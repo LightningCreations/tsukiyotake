@@ -6,8 +6,8 @@ use crate::{bb, hir, mir::*};
 #[derive(Debug)]
 struct UnbuiltBasicBlock {
     id: BasicBlockId,
-    stats: Vec<Statement>,
-    term: Option<Terminator>,
+    stats: Vec<Spanned<Statement>>,
+    term: Option<Spanned<Terminator>>,
 }
 
 impl UnbuiltBasicBlock {
@@ -23,11 +23,12 @@ impl UnbuiltBasicBlock {
         BasicBlock {
             id: self.id,
             stats: core::mem::take(&mut self.stats),
-            term: core::mem::take(&mut self.term).unwrap_or(Terminator::Return(Multival::Empty)),
+            term: core::mem::take(&mut self.term)
+                .unwrap_or(Spanned(Terminator::Return(Multival::Empty), 0..0)), // TODO: Make this a real span
         }
     }
 
-    fn push(&mut self, stat: Statement) {
+    fn push(&mut self, stat: Spanned<Statement>) {
         self.stats.push(stat);
     }
 }
@@ -137,8 +138,10 @@ impl MirConverter {
                 let params =
                     Multival::FixedList(x.args.iter().map(|x| self.convert_exp(&x)).collect());
 
-                self.cur_block
-                    .push(Statement::Call(None, FunctionCall { base: lhs, params }));
+                self.cur_block.push(Spanned(
+                    Statement::Call(None, FunctionCall { base: lhs, params }),
+                    x.1.clone(),
+                ));
             }
             x => todo!("{x:?}"),
         }
@@ -232,20 +235,25 @@ mod test {
                 variadic: true,
                 blocks: vec![BasicBlock {
                     id: bb!(1),
-                    stats: vec![Statement::Call(
-                        None,
-                        FunctionCall {
-                            base: Expr::Index(s!(
-                                IndexExpr {
-                                    base: Box::new(Expr::Var(ssa_var!(1))),
-                                    index: Index::Name("print".into()),
-                                },
-                                0..5
-                            )),
-                            params: Multival::FixedList(vec![Expr::String(b"Hello World".into())])
-                        }
+                    stats: vec![s!(
+                        Statement::Call(
+                            None,
+                            FunctionCall {
+                                base: Expr::Index(s!(
+                                    IndexExpr {
+                                        base: Box::new(Expr::Var(ssa_var!(1))),
+                                        index: Index::Name("print".into()),
+                                    },
+                                    0..5
+                                )),
+                                params: Multival::FixedList(vec![Expr::String(
+                                    b"Hello World".into()
+                                )])
+                            }
+                        ),
+                        0..20
                     )],
-                    term: Terminator::Return(Multival::Empty),
+                    term: s!(Terminator::Return(Multival::Empty), 0..0),
                 }],
             }
         )
