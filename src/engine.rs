@@ -950,6 +950,8 @@ impl<'ctx> LuaEngine<'ctx> {
                     .finish_non_exhaustive()
             }
         }
+
+        DebugError(self, err)
     }
 
     fn eval(
