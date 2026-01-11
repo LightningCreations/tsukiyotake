@@ -987,7 +987,23 @@ impl<'ctx> LuaEngine<'ctx> {
             }
             mir::Expr::ReadUpvar(ssa_var_id) => todo!(),
             mir::Expr::Extract(multival, _) => todo!(),
-            mir::Expr::Table(table_constructor) => todo!(),
+            mir::Expr::Table(table_constructor) => {
+                let mut table = Table::new(self);
+                for (idx, expr) in &table_constructor.hash_part {
+                    let key = match idx {
+                        Index::Expr(expr) => self.eval(&expr, frame)?,
+                        Index::Name(name) => Value::string_literal(name.as_bytes()),
+                    };
+                    let value = self.eval(expr, frame)?;
+                    table.insert(self, key, value);
+                }
+                let list = self.eval_multi(&table_constructor.array_part, frame)?;
+                for (i, value) in list.into_iter().enumerate() {
+                    table.insert(self, Value::new_int(i64::try_from(i + 1).unwrap()), value);
+                }
+                let table = self.allocate_managed_value(table);
+                Ok(table)
+            }
             mir::Expr::String(items) => Ok(Value::string_literal(items)),
             mir::Expr::Closure(closure_def) => todo!(),
             mir::Expr::Boolean(_) => todo!(),
