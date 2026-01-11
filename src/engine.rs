@@ -821,11 +821,20 @@ impl<'ctx> LuaEngine<'ctx> {
                 Some(block) => match block.stats.get(last.current_instruction.get()) {
                     Some(stat) => {
                         match &**stat {
-                            crate::mir::Statement::Multideclare(ssa_var_ids, multival) => todo!(),
+                            crate::mir::Statement::Multideclare(ssa_var_ids, multival) => {
+                                let vals = wtry_cf!(self.eval_multi(&multival, &last));
+                                for (id, val) in ssa_var_ids.iter().zip(core::iter::chain(
+                                    vals.into_iter(),
+                                    core::iter::repeat(Value::nil()),
+                                )) {
+                                    last.vars[id.val() as usize].set(Multival::Value(val));
+                                }
+                            }
                             crate::mir::Statement::Call(ssa_var_id, function_call) => {
                                 let val = wtry_cf!(self.eval(&function_call.base, &last));
 
-                                let params = wtry_cf!(self.eval_multi(&function_call.params, &last));
+                                let params =
+                                    wtry_cf!(self.eval_multi(&function_call.params, &last));
 
                                 match val.unpack() {
                                     UnpackedValue::Managed(ManagedValue::Closure(cl)) => {
@@ -883,7 +892,7 @@ impl<'ctx> LuaEngine<'ctx> {
                                 Err(e) => return ControlFlow::Break(Err(e)),
                             };
 
-                            last.ret_val.set(Some(mval));
+                            last.ret_val.set(Some(Multival::Multival(mval)));
 
                             ControlFlow::Break(Ok(()))
                         }
@@ -1024,9 +1033,9 @@ impl<'ctx> LuaEngine<'ctx> {
         &'ctx self,
         mval: &'ctx mir::Multival,
         frame: &LuaFrame<'ctx>,
-    ) -> Result<Multival<'ctx>, LuaError<'ctx>> {
+    ) -> Result<Vec<Value<'ctx>>, LuaError<'ctx>> {
         match mval {
-            mir::Multival::Empty => Ok(Multival::Multival(Vec::new_in(self.alloc()))),
+            mir::Multival::Empty => Ok(Vec::new_in(self.alloc())),
             mir::Multival::FixedList(exprs) => {
                 let mut list = Vec::new_in(self.alloc());
                 exprs
@@ -1037,10 +1046,16 @@ impl<'ctx> LuaEngine<'ctx> {
                         Ok(())
                     })?;
 
-                Ok(Multival::Multival(list))
+                Ok(list)
             }
             mir::Multival::Var { var, count } => todo!(),
-            mir::Multival::Concat(multivals) => todo!(),
+            mir::Multival::Concat(multivals) => {
+                let mut list = Vec::new_in(self.alloc());
+                for mval in multivals {
+                    list.append(&mut self.eval_multi(mval, frame)?);
+                }
+                Ok(list)
+            }
             mir::Multival::ClampSize { base, min, max } => todo!(),
             mir::Multival::Subslice { base, start, end } => todo!(),
         }
