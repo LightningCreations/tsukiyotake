@@ -60,7 +60,11 @@ fn print<'ctx>(
     for param in params {
         print!(
             "{sep}{}",
-            String::from_utf8_lossy(engine.as_string(*param).unwrap())
+            String::from_utf8_lossy(
+                engine
+                    .as_string(engine.do_tostring(*param).ok().unwrap())
+                    .unwrap()
+            )
         );
         sep = "\t";
     }

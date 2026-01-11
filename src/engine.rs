@@ -1,5 +1,7 @@
 use alloc::alloc::AllocError;
 use alloc::alloc::Allocator;
+use alloc::string::String;
+use alloc::string::ToString;
 use alloc::sync::Arc;
 use bytemuck::Zeroable;
 use core::alloc::Layout;
@@ -531,6 +533,13 @@ pub unsafe trait ArenaTy<'ctx> {
     const TY: ManagedType;
 }
 
+#[derive(Clone)]
+pub struct ManagedString<'ctx>(pub Vec<'ctx, u8>); // TODO: small string opt (maybe pull in compact_str or similar?)
+
+unsafe impl<'ctx> ArenaTy<'ctx> for ManagedString<'ctx> {
+    const TY: ManagedType = ManagedType::ManagedString;
+}
+
 pub mod table;
 
 pub struct LuaFrame<'ctx> {
@@ -990,6 +999,17 @@ impl<'ctx> LuaEngine<'ctx> {
         }
 
         DebugError(self, err)
+    }
+
+    pub fn do_tostring(&'ctx self, val: Value<'ctx>) -> Result<Value<'ctx>, LuaError<'ctx>> {
+        // TODO: better parity with reference impl Lua tostring
+        match val.unpack() {
+            UnpackedValue::Int(x) => Ok(self.allocate_managed_value(ManagedString(
+                Box::new_in(x.to_string().as_bytes(), self.alloc()).to_vec_in(self.alloc()), // TODO: make this suck less
+            ))),
+            UnpackedValue::String(_) => Ok(val),
+            _ => todo!(),
+        }
     }
 
     fn eval(
