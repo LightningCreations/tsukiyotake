@@ -841,7 +841,7 @@ impl<'ctx> LuaEngine<'ctx> {
                                         let ret = wtry_cf!(self.call_func(cl, params.as_slice()));
 
                                         if let Some(var) = ssa_var_id {
-                                            last.vars[var.val() as usize].set(ret);
+                                            last.vars[var.val() as usize].set(ret).ok().unwrap();
                                         }
                                     }
                                     _ => {
@@ -860,7 +860,26 @@ impl<'ctx> LuaEngine<'ctx> {
                                 table,
                                 index,
                                 value,
-                            } => todo!(),
+                            } => {
+                                let val = wtry_cf!(self.eval(table, &last));
+
+                                match val.unpack() {
+                                    UnpackedValue::Managed(ManagedValue::Table(table)) => {
+                                        let table = unsafe { &mut *(self.resolve_ptr(table)) };
+                                        let key = match index {
+                                            Index::Expr(expr) => wtry_cf!(self.eval(&expr, &last)),
+                                            Index::Name(name) => Value::string_literal(name.as_bytes()),
+                                        };
+                                        let value = wtry_cf!(self.eval(value, &last));
+                                        table.insert(self, key, value);
+                                    }
+                                    _ => {
+                                        return ControlFlow::Break(Err(
+                                            self.type_error(val.type_of(), "newindex")
+                                        ));
+                                    }
+                                }
+                            }
                             crate::mir::Statement::Close(ssa_var_ids) => todo!(),
                         }
                         last.current_instruction.update(|v| v + 1);
@@ -999,6 +1018,7 @@ impl<'ctx> LuaEngine<'ctx> {
                 }
                 let list = self.eval_multi(&table_constructor.array_part, frame)?;
                 for (i, value) in list.into_iter().enumerate() {
+                    // TODO: add table.insert_index() for less-dumb speed
                     table.insert(self, Value::new_int(i64::try_from(i + 1).unwrap()), value);
                 }
                 let table = self.allocate_managed_value(table);
@@ -1007,7 +1027,7 @@ impl<'ctx> LuaEngine<'ctx> {
             mir::Expr::String(items) => Ok(Value::string_literal(items)),
             mir::Expr::Closure(closure_def) => todo!(),
             mir::Expr::Boolean(_) => todo!(),
-            mir::Expr::Integer(_) => todo!(),
+            mir::Expr::Integer(x) => Ok(Value::new_int(*x)),
             mir::Expr::Float(_) => todo!(),
             mir::Expr::Index(spanned) => {
                 let base = self.eval(&spanned.0.base, frame)?;
