@@ -1004,9 +1004,12 @@ impl<'ctx> LuaEngine<'ctx> {
     pub fn do_tostring(&'ctx self, val: Value<'ctx>) -> Result<Value<'ctx>, LuaError<'ctx>> {
         // TODO: better parity with reference impl Lua tostring
         match val.unpack() {
-            UnpackedValue::Int(x) => Ok(self.allocate_managed_value(ManagedString(
-                Box::new_in(x.to_string().as_bytes(), self.alloc()).to_vec_in(self.alloc()), // TODO: make this suck less
-            ))),
+            UnpackedValue::Int(x) => {
+                let result_global = x.to_string().into_bytes();
+                let mut result = Vec::new_in(self.alloc());
+                result.extend_from_slice(&result_global);
+                Ok(self.allocate_managed_value(ManagedString(result)))
+            }
             UnpackedValue::String(_) => Ok(val),
             _ => todo!(),
         }
