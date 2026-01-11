@@ -266,7 +266,7 @@ impl<'ctx> Value<'ctx> {
                 UnpackedValue::Managed(mval)
             }
             Type::Boolean => todo!(),
-            Type::Int => todo!(),
+            Type::Int => UnpackedValue::Int(unsafe { self.0.int.int } as i64),
             Type::Float => todo!(),
             Type::UnmanagedString => UnpackedValue::String(unsafe {
                 core::slice::from_raw_parts(
