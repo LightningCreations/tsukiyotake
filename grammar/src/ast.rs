@@ -514,6 +514,33 @@ pub enum BinOp {
     Or,  // keyword/boolean
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Hash, Eq)]
+pub enum BinOpClass {
+    NormalArithmetic,  // Add, Sub, Mul, Idiv, Mod
+    SpecialArithmetic, // Pow, Div
+    Bitwise,           // Band, Bor, Bxor, Shr, Shl
+    Relational,        // Lt, Le, Gt, Ge, Eq, Neq
+    Logical,           // And, Or
+    Concat,            // Concat
+}
+
+impl BinOp {
+    pub fn class(&self) -> BinOpClass {
+        match self {
+            Self::Add | Self::Sub | Self::Mul | Self::Idiv | Self::Mod => {
+                BinOpClass::NormalArithmetic
+            }
+            Self::Pow | Self::Div => BinOpClass::SpecialArithmetic,
+            Self::Band | Self::Bor | Self::Bxor | Self::Shr | Self::Shl => BinOpClass::Bitwise,
+            Self::Lt | Self::Le | Self::Gt | Self::Ge | Self::Eq | Self::Neq => {
+                BinOpClass::Relational
+            }
+            Self::And | Self::Or => BinOpClass::Logical,
+            Self::Concat => BinOpClass::Concat, // special :D
+        }
+    }
+}
+
 impl fmt::Display for BinOp {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.write_str(match self {

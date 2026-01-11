@@ -14,6 +14,8 @@ use core::ops::ControlFlow;
 use core::ops::Deref;
 use core::ptr::NonNull;
 use tsukiyotake_grammar::Span;
+use tsukiyotake_grammar::ast::BinOp;
+use tsukiyotake_grammar::ast::BinOpClass;
 
 use crate::engine::table::Table;
 use crate::mir;
@@ -868,7 +870,9 @@ impl<'ctx> LuaEngine<'ctx> {
                                         let table = unsafe { &mut *(self.resolve_ptr(table)) };
                                         let key = match index {
                                             Index::Expr(expr) => wtry_cf!(self.eval(&expr, &last)),
-                                            Index::Name(name) => Value::string_literal(name.as_bytes()),
+                                            Index::Name(name) => {
+                                                Value::string_literal(name.as_bytes())
+                                            }
                                         };
                                         let value = wtry_cf!(self.eval(value, &last));
                                         table.insert(self, key, value);
@@ -1061,7 +1065,33 @@ impl<'ctx> LuaEngine<'ctx> {
                 }
             }
             mir::Expr::UnaryOp(spanned) => todo!(),
-            mir::Expr::BinaryOp(spanned) => todo!(),
+            mir::Expr::BinaryOp(spanned) => {
+                let lhs = self.eval(&spanned.0.left, frame)?;
+                let rhs = self.eval(&spanned.0.right, frame)?;
+
+                match (spanned.op.class(), lhs.unpack(), rhs.unpack()) {
+                    (
+                        BinOpClass::NormalArithmetic,
+                        UnpackedValue::Int(lhs),
+                        UnpackedValue::Int(rhs),
+                    ) => Ok(Value::new_int(match spanned.op {
+                        BinOp::Add => lhs.wrapping_add(rhs),
+                        BinOp::Sub => lhs.wrapping_sub(rhs),
+                        BinOp::Mul => lhs.wrapping_mul(rhs),
+                        BinOp::Idiv => {
+                            // TODO: replace with wrapping_div_floor once it's available
+                            if rhs == -1 {
+                                lhs.wrapping_div(rhs)
+                            } else {
+                                lhs.div_floor(rhs)
+                            }
+                        }
+                        BinOp::Mod => lhs % rhs, // TODO: replace with rem_floor once it's available (because this is technically wrong)
+                        _ => unreachable!(),
+                    })),
+                    _ => todo!(),
+                }
+            }
         }
     }
 
