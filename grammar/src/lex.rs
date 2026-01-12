@@ -123,7 +123,8 @@ pub enum Token<'src> {
     #[token("0", |lexer| lexer.slice())]
     Number(&'src str),
 
-    #[regex("\"([^\"\\\n\r]|(\\\\[\\\\nr'\"abtv])|(\\\\u\\{[0-9A-Fa-f]{1,8}\\})|(\\\\z[[:space:]]*)|(\\\\[0-9]{1,3})|(\\\\x[0-9A-Fa-f]{2}))*\"", |lexer| lexer.slice())]
+    #[regex(r#""([^"\n\r\\]|(\\[\\nr'"abtv])|(\\u\{[0-9A-Fa-f]{1,8}\})|(\\z[[:space:]]*)|(\\[0-9]{1,3})|(\\x[0-9A-Fa-f]{2}))*""#, |lexer| lexer.slice())]
+    #[regex(r#"'([^'\n\r\\]|(\\[\\nr'"abtv])|(\\u\{[0-9A-Fa-f]{1,8}\})|(\\z[[:space:]]*)|(\\[0-9]{1,3})|(\\x[0-9A-Fa-f]{2}))*'"#, |lexer| lexer.slice())]
     StringLiteral(&'src str),
 
     #[regex("\\[=*\\[", parse_raw_string)]
@@ -131,7 +132,7 @@ pub enum Token<'src> {
 
     #[regex("[[:space:]]+", logos::skip)]
     #[regex("--\\[[^\\]]*\\]", logos::skip)]
-    #[regex(r#"--[^\n]*\n"#, logos::skip)] // Line comment
+    #[regex(r#"--[^\n]*\n?"#, logos::skip)] // Line comment
     Whitespace,
 }
 
