@@ -580,10 +580,13 @@ pub enum UnOp {
 
 pub fn parse_string(x: &str) -> Box<[u8]> {
     let mut iter = x.bytes();
-    assert_eq!(iter.next(), Some(b'"'));
+
+    let start_char = iter.next().unwrap();
+    assert!(start_char == b'"' || start_char == b'\'');
+
     let mut result = Vec::new();
     while let Some(x) = iter.next() {
-        if x == b'"' {
+        if x == start_char {
             break;
         } else if x == b'\\' {
             todo!()
