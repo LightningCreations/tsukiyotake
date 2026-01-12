@@ -335,7 +335,7 @@ pub enum ManagedValue<'ctx> {
     Nil,
     Table(ArenaPtr<'ctx, Table<'ctx>>),
     Closure(ArenaPtr<'ctx, LuaFunction<'ctx>>),
-    String(ArenaPtr<'ctx, Box<'ctx, [u8]>>),
+    String(ArenaPtr<'ctx, ManagedString<'ctx>>),
     // More For later
 }
 
@@ -656,8 +656,8 @@ impl<'ctx> LuaEngine<'ctx> {
         match val.unpack() {
             UnpackedValue::String(s) => Some(s),
             UnpackedValue::Managed(ManagedValue::String(s)) => {
-                let ptr = unsafe { &*self.resolve_ptr(s) };
-                Some(ptr)
+                let string = unsafe { &*self.resolve_ptr(s) };
+                Some(&string.0)
             }
             _ => None,
         }
