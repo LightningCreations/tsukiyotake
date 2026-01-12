@@ -665,7 +665,12 @@ impl<'ctx> LuaEngine<'ctx> {
 
     pub fn raw_hash<H: Hasher>(&self, val: Value<'ctx>, state: &mut H) {
         use core::hash::Hash;
-        let ty = val.type_of(); // FIXME: Unify string types
+        let mut ty = val.type_of();
+
+        // Hacky unification of string types
+        if ty == Type::Managed(ManagedType::ManagedString) {
+            ty = Type::UnmanagedString;
+        }
 
         core::mem::discriminant(&ty).hash(state);
 
@@ -674,20 +679,8 @@ impl<'ctx> LuaEngine<'ctx> {
                 val.0.int.int.hash(state);
             },
             Type::UnmanagedString => {
-                let len = unsafe { val.0.wide_ptr.meta as usize & STRING_LEN_MASK };
-
-                hash_string(
-                    unsafe { core::slice::from_raw_parts(val.0.wide_ptr.ptr.cast::<u8>(), len) },
-                    state,
-                );
-            }
-            Type::Managed(ManagedType::ManagedString) => {
-                let ptr =
-                    unsafe { ArenaPtr::<Box<[u8]>>::new_unchecked(val.0.wide_ptr.ptr.addr()) };
-
-                let sl = unsafe { &*self.resolve_ptr(ptr) };
-
-                hash_string(sl, state);
+                // Defer to as_string because we recklessly collapsed managed and unmanaged strings earlier
+                hash_string(self.as_string(val).unwrap(), state);
             }
             Type::Managed(_) => core::ptr::hash(unsafe { val.0.wide_ptr.ptr }, state),
         }
