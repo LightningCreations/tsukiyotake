@@ -4,14 +4,10 @@ use std::path::PathBuf;
 
 use clap::Parser;
 use tsukiyotake::{
-    engine::{
+    Logos, engine::{
         CaptureSpan, LuaEngine, LuaError, ManagedValue, UnpackedValue, Value, Vec as TsuVec,
         table::Table,
-    },
-    grammar::BlockParser,
-    hir::HirConversionContext,
-    logos_lalrpop_bridge::Lexer,
-    mir::{FunctionDef, MirConverter},
+    }, hir::HirConversionContext, lex::Token, mir::{FunctionDef, MirConverter}, parse::parse_block
 };
 
 #[derive(Parser)]
@@ -27,9 +23,8 @@ fn main() {
     if let Some(file) = args.file {
         let input = std::fs::read_to_string(file).unwrap();
 
-        let lexer = Lexer::new(&input);
-        let parser = BlockParser::new();
-        let ast = parser.parse(&input, lexer).unwrap();
+        let lexer = Token::lexer(&input);
+        let ast = parse_block(&mut lexer.spanned().peekable()).unwrap();
 
         let conv = HirConversionContext::new();
         let hir = conv.convert_block(&ast);

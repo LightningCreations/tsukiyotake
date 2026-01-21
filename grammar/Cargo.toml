@@ -4,15 +4,11 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-lalrpop-util = "0.22.2"
 logos = { version = "0.15.1", default-features = false, features = [
     "export_derive",
     "logos-derive",
     # "debug",
 ] }
-
-[build-dependencies]
-lalrpop = "0.22.2"
 
 [dev-dependencies]
 indoc = "2.0.7"

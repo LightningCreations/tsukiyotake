@@ -1,13 +1,11 @@
-extern crate alloc;
+#![allow(incomplete_features)] // Remove these if they're breaking more than they're fixing
+#![feature(lazy_type_alias)]
 
-use lalrpop_util::lalrpop_mod;
+extern crate alloc;
 
 pub mod ast;
 pub mod lex;
-pub mod logos_lalrpop_bridge;
-lalrpop_mod!(pub grammar);
+pub mod parse;
 
-#[cfg(test)]
-mod grammar_test;
-
+pub use logos::Logos;
 pub use logos::Span;

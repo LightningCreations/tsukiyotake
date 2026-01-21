@@ -8,7 +8,7 @@ mod macros;
 
 pub mod hir;
 
-pub use tsukiyotake_grammar::{ast, grammar, lex, logos_lalrpop_bridge};
+pub use tsukiyotake_grammar::{ast, parse, lex, Logos, Span};
 
 pub mod engine;
 pub mod sync;

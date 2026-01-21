@@ -8,7 +8,7 @@ use alloc::{borrow::Cow, boxed::Box, vec::Vec};
 use logos::Span;
 
 // TODO: redo this so it is Copy
-#[derive(Clone, Debug, PartialEq, Hash, Eq)]
+#[derive(Clone, PartialEq, Hash, Eq)]
 pub struct Spanned<T>(pub T, pub Span);
 
 impl<T> Deref for Spanned<T> {
@@ -45,6 +45,9 @@ macro_rules! synth {
     };
 }
 
+pub const SYNTHETIC_POS: usize = usize::MAX;
+pub const SYNTHETIC_SPAN: Span = usize::MAX..usize::MAX;
+
 impl<T> Spanned<T> {
     pub fn as_ref(&self) -> Spanned<&T> {
         Spanned(&self.0, self.1.clone()) // practically free clone
@@ -63,6 +66,23 @@ impl<T> Spanned<T> {
     }
 }
 
+fn debug_span(span: &Span) -> String {
+    if span == &SYNTHETIC_SPAN {
+        "<synthetic>".into()
+    } else {
+        format!("{span:?}")
+    }
+}
+
+impl<T: fmt::Debug> fmt::Debug for Spanned<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "(")?;
+        self.0.fmt(f)?;
+        write!(f, " @ {})", debug_span(&self.1))?;
+        Ok(())
+    }
+}
+
 impl<T> Spanned<Option<T>> {
     pub fn transpose(self) -> Option<Spanned<T>> {
         match self.0 {
@@ -74,7 +94,7 @@ impl<T> Spanned<Option<T>> {
 
 pub type List<T> = Spanned<Vec<Spanned<T>>>;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Block<'src> {
     pub stats: Vec<Spanned<Stat<'src>>>,
     pub retstat: Option<List<Exp<'src>>>,
@@ -156,6 +176,7 @@ pub enum Stat<'src> {
         names: List<AttName<'src>>,
         exps: Option<List<Exp<'src>>>,
     },
+    Error,
 }
 
 impl Stat<'_> {
@@ -296,6 +317,7 @@ pub enum Exp<'src> {
         op: UnOp,
         rhs: Box<Spanned<Exp<'src>>>,
     },
+    Error,
 }
 
 impl Exp<'_> {
@@ -337,6 +359,7 @@ pub enum PrefixExp<'src> {
     Var(Spanned<Var<'src>>),
     FunctionCall(Spanned<FunctionCall<'src>>),
     Parens(Box<Spanned<Exp<'src>>>),
+    Error,
 }
 
 impl PrefixExp<'_> {
@@ -383,6 +406,7 @@ pub enum Args<'src> {
     List(List<Exp<'src>>),
     TableConstructor(List<Field<'src>>),
     String(Spanned<Box<[u8]>>),
+    Error,
 }
 
 impl Args<'_> {
@@ -539,6 +563,23 @@ impl BinOp {
             Self::Concat => BinOpClass::Concat, // special :D
         }
     }
+
+    pub fn binding_power(&self) -> (u8, u8) {
+        match self {
+            BinOp::Or => (0, 1),
+            BinOp::And => (2, 3),
+            BinOp::Lt | BinOp::Gt | BinOp::Le | BinOp::Ge | BinOp::Neq | BinOp::Eq => (4, 5),
+            BinOp::Bor => (6, 7),
+            BinOp::Bxor => (8, 9),
+            BinOp::Band => (10, 11),
+            BinOp::Shl | BinOp::Shr => (12, 13),
+            BinOp::Concat => (15, 14),
+            BinOp::Add | BinOp::Sub => (16, 17),
+            BinOp::Mul | BinOp::Div | BinOp::Idiv | BinOp::Mod => (18, 19),
+            // 20 is for unary ops
+            BinOp::Pow => (22, 21),
+        }
+    }
 }
 
 impl fmt::Display for BinOp {
@@ -576,23 +617,4 @@ pub enum UnOp {
     Not, // keyword/boolean
     Len,
     Bnot,
-}
-
-pub fn parse_string(x: &str) -> Box<[u8]> {
-    let mut iter = x.bytes();
-
-    let start_char = iter.next().unwrap();
-    assert!(start_char == b'"' || start_char == b'\'');
-
-    let mut result = Vec::new();
-    while let Some(x) = iter.next() {
-        if x == start_char {
-            break;
-        } else if x == b'\\' {
-            todo!()
-        } else {
-            result.push(x);
-        }
-    }
-    result.into_boxed_slice()
 }
