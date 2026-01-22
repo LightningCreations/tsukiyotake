@@ -111,6 +111,7 @@ pub enum Exp<'src> {
     },
     Var(Spanned<Var<'src>>),
     FunctionCall(Spanned<FunctionCall<'src>>),
+    CollapseMultival(Box<Spanned<Exp<'src>>>),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -336,7 +337,10 @@ impl HirConversionContext {
                 op: *op,
                 rhs: Box::new(self.convert_exp((**rhs).as_ref())),
             },
-            ast::Exp::UnExp { op, rhs } => todo!(),
+            ast::Exp::UnExp { op, rhs } => Exp::UnExp {
+                op: *op,
+                rhs: Box::new(self.convert_exp((**rhs).as_ref())),
+            },
             ast::Exp::Error => {
                 unimplemented!("errors should be handled before attempting HIR translation")
             }
@@ -350,7 +354,7 @@ impl HirConversionContext {
         ast.map(|x| match x {
             ast::PrefixExp::Var(x) => Exp::Var(self.convert_var(x.as_ref())),
             ast::PrefixExp::FunctionCall(spanned) => todo!(),
-            ast::PrefixExp::Parens(spanned) => todo!(),
+            ast::PrefixExp::Parens(x) => Exp::CollapseMultival(Box::new(self.convert_exp((**x).as_ref()))),
             ast::PrefixExp::Error => {
                 unimplemented!("errors should be handled before attempting HIR translation")
             }
