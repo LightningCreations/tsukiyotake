@@ -8,8 +8,8 @@ use logos::Span;
 
 use crate::{
     ast::{
-        Args, BinOp, Block, Exp, Field, FunctionCall, PrefixExp, SYNTHETIC_POS, SYNTHETIC_SPAN,
-        Spanned, Stat, UnOp, Var,
+        Args, AttName, BinOp, Block, Exp, Field, FunctionCall, PrefixExp, SYNTHETIC_POS,
+        SYNTHETIC_SPAN, Spanned, Stat, UnOp, Var,
     },
     lex::Token,
     s, synth,
@@ -37,9 +37,12 @@ pub enum TokenClass {
     CBrace,
     OSquare,
     CSquare,
+    LAngle,
+    RAngle,
 
     Then,
 
+    Function,
     Expression,
     EndOfBlock,
     Eof,
@@ -368,7 +371,7 @@ fn parse_atom<'a, E: Clone + fmt::Debug>(
                 Token::Not => UnOp::Not,
                 Token::Count => UnOp::Len,
                 Token::BitNot => UnOp::Bnot,
-                _ => unreachable!()
+                _ => unreachable!(),
             };
             update_span(&mut result_span, span);
             input.next();
@@ -660,6 +663,89 @@ pub fn parse_prefix_exp<'a, E: Clone + fmt::Debug>(
     finish(s!(lhs, result_span.unwrap_or(SYNTHETIC_SPAN)), errors)
 }
 
+pub fn parse_att_name<'a, E: Clone + fmt::Debug>(
+    input: &mut Peekable<impl Iterator<Item = (Result<Token<'a>, E>, Span)>>,
+) -> ParseResult<'a, AttName<'a>, E> {
+    let mut result_span = None;
+    let mut errors = vec![];
+
+    let name = match input.next() {
+        Some((Err(e), span)) => {
+            lex_error(&e, &span, &mut result_span, &mut errors);
+            synth!("<error>".into())
+        }
+        Some((Ok(Token::Ident(x)), span)) => {
+            update_span(&mut result_span, &span);
+            s!(x.into(), span)
+        }
+        x => {
+            expected_got_error_from_peek_result(
+                vec![TokenClass::Ident],
+                x.as_ref(),
+                &mut result_span,
+                &mut errors,
+            );
+            synth!("<error>".into())
+        }
+    };
+
+    let attrib = {
+        match input.peek() {
+            Some((Err(e), span)) => {
+                lex_error(e, span, &mut result_span, &mut errors);
+                input.next();
+                None
+            }
+            Some((Ok(Token::LeftAngle), _)) => {
+                input.next(); // Definitely an attribute; keep going.
+                match input.next() {
+                    Some((Err(e), span)) => {
+                        lex_error(&e, &span, &mut result_span, &mut errors);
+                        None
+                    }
+                    Some((Ok(Token::Ident(x)), str_span)) => match input.next() {
+                        Some((Err(e), span)) => {
+                            lex_error(&e, &span, &mut result_span, &mut errors);
+                            None
+                        }
+                        Some((Ok(Token::LeftAngle), span)) => {
+                            update_span(&mut result_span, &span);
+                            Some(s!(x.into(), str_span))
+                        }
+                        x => {
+                            expected_got_error_from_peek_result(
+                                vec![TokenClass::RAngle],
+                                x.as_ref(),
+                                &mut result_span,
+                                &mut errors,
+                            );
+                            None
+                        }
+                    },
+                    x => {
+                        expected_got_error_from_peek_result(
+                            vec![TokenClass::Ident],
+                            x.as_ref(),
+                            &mut result_span,
+                            &mut errors,
+                        );
+                        None
+                    }
+                }
+            }
+            _ => None,
+        }
+    };
+
+    finish(
+        s!(
+            AttName { name, attrib },
+            result_span.unwrap_or(SYNTHETIC_SPAN)
+        ),
+        errors,
+    )
+}
+
 pub fn parse_stat<'a, E: Clone + fmt::Debug>(
     input: &mut Peekable<impl Iterator<Item = (Result<Token<'a>, E>, Span)>>,
 ) -> ParseResult<'a, Stat<'a>, E> {
@@ -674,6 +760,7 @@ pub fn parse_stat<'a, E: Clone + fmt::Debug>(
             }
             Some((Ok(Token::Semi), span)) => {
                 update_span(&mut result_span, span);
+                input.next();
                 Some(Stat::Empty)
             }
             x @ Some((Ok(Token::Ident(_) | Token::OParen), span)) => {
@@ -876,6 +963,90 @@ pub fn parse_stat<'a, E: Clone + fmt::Debug>(
                     elseifs: vec![],
                     else_block,
                 })
+            }
+            Some((Ok(Token::Local), _)) => {
+                input.next();
+                match input.peek() {
+                    Some((Err(e), span)) => {
+                        lex_error(e, span, &mut result_span, &mut errors);
+                        None
+                    }
+                    Some((Ok(Token::Function), _)) => todo!(), // Local function
+                    Some((Ok(Token::Ident(_)), _)) => {
+                        // Local variable(s)
+                        let mut names_span = None; // Start fresh
+                        let mut names =
+                            vec![unbox(parse_att_name(input), &mut names_span, &mut errors)];
+
+                        let need_exps = loop {
+                            match input.peek() {
+                                Some((Err(e), span)) => {
+                                    lex_error(e, span, &mut result_span, &mut errors);
+                                    input.next();
+                                    break false; // Bail from the statement, even if the user expected to assign things; the lexer error takes priority
+                                }
+                                Some((Ok(Token::Comma), _)) => {
+                                    input.next();
+                                }
+                                Some((Ok(Token::Assign), _)) => {
+                                    input.next();
+                                    break true;
+                                }
+                                _ => {
+                                    break false; // Statement over
+                                }
+                            }
+                            names.push(unbox(parse_att_name(input), &mut names_span, &mut errors));
+                        };
+
+                        let names = s!(names, names_span.unwrap_or(SYNTHETIC_SPAN));
+
+                        let exps = if need_exps {
+                            let mut exps_span = None; // Start this from scratch! We'll update the result span at the end.
+                            let mut exps = vec![];
+
+                            exps.push(unbox(parse_exp(input), &mut exps_span, &mut errors)); // ez
+
+                            loop {
+                                // Now, we're expecting a comma. If we don't find one, assume the statement is done.
+                                match input.peek() {
+                                    Some((Err(e), span)) => {
+                                        lex_error(e, span, &mut result_span, &mut errors);
+                                        input.next();
+                                    }
+                                    Some((Ok(Token::Comma), span)) => {
+                                        // yay!
+                                        update_span(&mut result_span, span);
+                                        input.next();
+                                    }
+                                    _ => {
+                                        // annnnnd we're done. This is from the next statement, presumably, hence why we peeked earlier.
+                                        break;
+                                    }
+                                }
+
+                                exps.push(unbox(parse_exp(input), &mut exps_span, &mut errors)); // again, ez
+                            }
+
+                            let exps = s!(exps, exps_span.unwrap_or(SYNTHETIC_SPAN));
+                            update_span(&mut result_span, &exps.1);
+                            Some(exps)
+                        } else {
+                            None
+                        };
+
+                        Some(Stat::Local { names, exps })
+                    }
+                    x => {
+                        expected_got_error_from_peek_result(
+                            vec![TokenClass::Function, TokenClass::Ident],
+                            x,
+                            &mut result_span,
+                            &mut errors,
+                        );
+                        None
+                    }
+                }
             }
             x => {
                 expected_got_error_from_peek_result(
