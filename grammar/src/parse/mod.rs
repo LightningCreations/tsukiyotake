@@ -8,8 +8,8 @@ use logos::Span;
 
 use crate::{
     ast::{
-        Args, BinOp, Block, Exp, FunctionCall, PrefixExp, SYNTHETIC_POS, SYNTHETIC_SPAN, Spanned,
-        Stat, UnOp, Var,
+        Args, BinOp, Block, Exp, Field, FunctionCall, PrefixExp, SYNTHETIC_POS, SYNTHETIC_SPAN,
+        Spanned, Stat, UnOp, Var,
     },
     lex::Token,
     s, synth,
@@ -44,6 +44,7 @@ pub enum TokenClass {
     Expression,
     EndOfBlock,
     Eof,
+    Field,
     Statement,
     Var,
 }
@@ -154,7 +155,7 @@ fn recover<'a, E>(
                 }
                 input.next();
             }
-            None => break,
+            None => break, // Welp. EOF. Callee can trip on that and make a new error.
             _ => {
                 input.next();
             }
@@ -289,6 +290,12 @@ pub fn parse_list<
     finish(s!(list, result_span.unwrap_or(SYNTHETIC_SPAN)), errors)
 }
 
+fn parse_table_field<'a, E: Clone + fmt::Debug>(
+    input: &mut Peekable<impl Iterator<Item = (Result<Token<'a>, E>, Span)>>,
+) -> ParseResult<'a, Field<'a>, E> {
+    todo!()
+}
+
 fn parse_atom<'a, E: Clone + fmt::Debug>(
     input: &mut Peekable<impl Iterator<Item = (Result<Token<'a>, E>, Span)>>,
 ) -> ParseResult<'a, Exp<'a>, E> {
@@ -296,6 +303,19 @@ fn parse_atom<'a, E: Clone + fmt::Debug>(
     let mut errors = vec![];
 
     let result_atom = match input.peek() {
+        Some((Ok(Token::Number(x)), span)) => {
+            update_span(&mut result_span, span);
+            let str = *x;
+            let span = span.clone();
+            input.next();
+            if let Ok(x) = str.parse() {
+                Some(Exp::NumeralInt(s!(x, span.clone())))
+            } else if let Ok(x) = str.parse() {
+                Some(Exp::NumeralFloat(s!(x, span.clone())))
+            } else {
+                todo!("more interesting numerals")
+            }
+        }
         Some((Ok(Token::StringLiteral(x)), span)) => {
             update_span(&mut result_span, span);
             let str = parse_string(x);
@@ -303,6 +323,27 @@ fn parse_atom<'a, E: Clone + fmt::Debug>(
             input.next();
             Some(Exp::LiteralString(s!(str, span)))
         }
+        Some((Ok(Token::OBrace), _)) => {
+            let list = parse_list(
+                input,
+                Token::OBrace,
+                Token::CBrace,
+                Token::Comma,
+                true,
+                TokenClass::Field,
+                parse_table_field,
+            );
+            Some(Exp::TableConstructor(unbox(
+                list,
+                &mut result_span,
+                &mut errors,
+            )))
+        }
+        Some((Ok(Token::Ident(_) | Token::OParen), _)) => Some(Exp::PrefixExp(unbox(
+            parse_prefix_exp(input),
+            &mut result_span,
+            &mut errors,
+        ))),
         x => {
             expected_got_error_from_peek_result(
                 vec![TokenClass::Expression],
@@ -345,7 +386,31 @@ pub fn parse_exp_inner<'a, E: Clone + fmt::Debug>(
 
     let mut lhs = unbox(parse_atom(input), &mut result_span, &mut errors).0; // We're tracking span separately; extract the value
 
-    // TODO: Actual Pratt parsing
+    loop {
+        let old_span = result_span.clone();
+        let op = match input.peek() {
+            Some((Ok(Token::Plus), _)) => BinOp::Add,
+            Some((Ok(Token::Minus), _)) => BinOp::Sub,
+            Some((Ok(Token::Star), _)) => BinOp::Mul,
+            Some((Ok(Token::Slash), _)) => BinOp::Div,
+            _ => break, // no longer an expression; bail
+        };
+
+        let (l_bp, r_bp) = op.binding_power();
+        if l_bp < min_bp {
+            break;
+        }
+
+        input.next();
+
+        let rhs = unbox(parse_exp_inner(input, r_bp), &mut result_span, &mut errors);
+
+        lhs = Exp::BinExp {
+            lhs: Box::new(s!(lhs, old_span.unwrap_or(SYNTHETIC_SPAN))),
+            op,
+            rhs: Box::new(rhs),
+        };
+    }
 
     finish(s!(lhs, result_span.unwrap_or(SYNTHETIC_SPAN)), errors)
 }
@@ -479,10 +544,39 @@ pub fn parse_prefix_exp<'a, E: Clone + fmt::Debug>(
                         args,
                     },
                     result_span.clone().unwrap_or(SYNTHETIC_SPAN)
-                ))
+                ));
             }
             Some((Ok(Token::Dot), _)) => todo!(),
-            Some((Ok(Token::OSquare), _)) => todo!(),
+            Some((Ok(Token::OSquare), _)) => {
+                // Array-like indexing
+                let old_span = result_span.clone().unwrap_or(SYNTHETIC_SPAN); // should always have something if we got here, but just in case
+                input.next();
+                let idx = unbox(parse_exp(input), &mut result_span, &mut errors);
+                match input.next() {
+                    Some((Err(e), span)) => {
+                        // welp.
+                        lex_error(&e, &span, &mut result_span, &mut errors);
+                    }
+                    Some((Ok(Token::CSquare), span)) => {
+                        update_span(&mut result_span, &span);
+                    }
+                    x => {
+                        expected_got_error_from_peek_result(
+                            vec![TokenClass::CSquare],
+                            x.as_ref(),
+                            &mut result_span,
+                            &mut errors,
+                        );
+                    }
+                }
+                lhs = PrefixExp::Var(s!(
+                    Var::Index {
+                        lhs: Box::new(s!(lhs, old_span)),
+                        idx: Box::new(idx),
+                    },
+                    result_span.clone().unwrap_or(SYNTHETIC_SPAN)
+                ));
+            }
             _ => {
                 break; // not part of a prefixexp anymore; get out
             }
@@ -524,8 +618,95 @@ pub fn parse_stat<'a, E: Clone + fmt::Debug>(
                         None
                     }
                     PrefixExp::Var(x) => {
-                        // assign
-                        todo!()
+                        // Assign statement
+                        // This'll be a bit of code duplication because we are handling a pair of "lists", but we're doing it way differently from what parse_list supports.
+                        let mut vars = vec![x];
+
+                        loop {
+                            // We're expecting a comma first (or an assignment if the list of variables is done).
+                            match input.next() {
+                                Some((Err(e), span)) => {
+                                    lex_error(&e, &span, &mut result_span, &mut errors);
+                                }
+                                Some((Ok(Token::Comma), span)) => {
+                                    // yay!
+                                    update_span(&mut result_span, &span);
+                                }
+                                Some((Ok(Token::Assign), span)) => {
+                                    // also yay! we're done!
+                                    // We're not updating the span on purpose. The variable span shouldn't include the assignment sigil, and the next expression will update the span when it appears.
+                                    break;
+                                }
+                                x => {
+                                    // uh oh.
+                                    // So... this is *really* malformed code at this point. We're gonna just skip the rest of the list and jump to the equals sign.
+                                    expected_got_error_from_peek_result(
+                                        vec![TokenClass::Assign, TokenClass::Comma],
+                                        x.as_ref(),
+                                        &mut result_span,
+                                        &mut errors,
+                                    );
+                                    recover(input, vec![Token::Assign]);
+                                    input.next(); // annnnd consume the assign token.
+                                    break; // annnnd get the heck out
+                                }
+                            }
+
+                            // We got a comma; now, we need a variable.
+                            let peeked = input.peek().cloned(); // used TEMPORARILY for error reporting if we got the wrong thing
+                            let var = unbox(parse_prefix_exp(input), &mut result_span, &mut errors);
+
+                            // Make sure it's actually a variable (since we funnel variable parsing through the prefixexp parser)
+                            let var = match var.0 {
+                                PrefixExp::Var(x) => Some(x), // yay!
+                                _ => {
+                                    // TODO: again, use the full expression in the error, not just the token.
+                                    expected_got_error_from_peek_result(
+                                        vec![TokenClass::Var],
+                                        peeked.as_ref(),
+                                        &mut result_span,
+                                        &mut errors,
+                                    );
+                                    // Don't add this to the list; it's more trouble than it's worth.
+                                    None
+                                }
+                            };
+                            if let Some(var) = var {
+                                vars.push(var);
+                            }
+                        }
+
+                        let vars = s!(vars, result_span.clone().unwrap_or(SYNTHETIC_SPAN));
+
+                        let mut exps_span = None; // Start this from scratch! We'll update the result span at the end.
+                        let mut exps = vec![];
+
+                        exps.push(unbox(parse_exp(input), &mut exps_span, &mut errors)); // ez
+
+                        loop {
+                            // Now, we're expecting a comma. If we don't find one, assume the statement is done.
+                            match input.peek() {
+                                Some((Err(e), span)) => {
+                                    lex_error(e, span, &mut result_span, &mut errors);
+                                    input.next();
+                                }
+                                Some((Ok(Token::Comma), span)) => {
+                                    // yay!
+                                    update_span(&mut result_span, span);
+                                    input.next();
+                                }
+                                _ => {
+                                    // annnnnd we're done. This is from the next statement, presumably, hence why we peeked earlier.
+                                    break;
+                                }
+                            }
+
+                            exps.push(unbox(parse_exp(input), &mut exps_span, &mut errors)); // again, ez
+                        }
+
+                        let exps = s!(exps, exps_span.unwrap_or(SYNTHETIC_SPAN));
+                        update_span(&mut result_span, &exps.1);
+                        Some(Stat::Assign { vars, exps })
                     }
                     PrefixExp::Error => {
                         None // Don't report an extra error, just keep recovering
