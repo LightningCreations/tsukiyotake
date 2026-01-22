@@ -27,9 +27,6 @@ pub enum TokenClass {
     Plus,
     Slash,
 
-    False,
-    True,
-
     Ident,
     Number,
     StringLiteral,
@@ -40,6 +37,8 @@ pub enum TokenClass {
     CBrace,
     OSquare,
     CSquare,
+
+    Then,
 
     Expression,
     EndOfBlock,
@@ -58,6 +57,7 @@ impl From<Token<'_>> for TokenClass {
             Token::CBrace => TokenClass::CBrace,
             Token::OSquare => TokenClass::OSquare,
             Token::CSquare => TokenClass::CSquare,
+            Token::Comma => TokenClass::Comma,
             x => todo!("{x:?}"),
         }
     }
@@ -283,6 +283,9 @@ pub fn parse_list<
                     expected_got_error_from_peek_result(expected, x, &mut result_span, &mut errors);
                 }
                 list.push(unbox(item_parser(input), &mut result_span, &mut errors));
+                allow_close = true; // always allow the list to end directly after an item
+                allow_item = false; // never allow two items without a delimiter
+                allow_delimiter = true; // always allow a delimiter after a list item
             }
         }
     }
@@ -303,6 +306,21 @@ fn parse_atom<'a, E: Clone + fmt::Debug>(
     let mut errors = vec![];
 
     let result_atom = match input.peek() {
+        Some((Ok(Token::Nil), span)) => {
+            update_span(&mut result_span, span);
+            input.next();
+            Some(Exp::Nil)
+        }
+        Some((Ok(Token::True), span)) => {
+            update_span(&mut result_span, span);
+            input.next();
+            Some(Exp::True)
+        }
+        Some((Ok(Token::False), span)) => {
+            update_span(&mut result_span, span);
+            input.next();
+            Some(Exp::False)
+        }
         Some((Ok(Token::Number(x)), span)) => {
             update_span(&mut result_span, span);
             let str = *x;
@@ -344,6 +362,25 @@ fn parse_atom<'a, E: Clone + fmt::Debug>(
             &mut result_span,
             &mut errors,
         ))),
+        Some((Ok(op @ (Token::Minus | Token::Not | Token::Count | Token::BitNot)), span)) => {
+            let op = match op {
+                Token::Minus => UnOp::Unm,
+                Token::Not => UnOp::Not,
+                Token::Count => UnOp::Len,
+                Token::BitNot => UnOp::Bnot,
+                _ => unreachable!()
+            };
+            update_span(&mut result_span, span);
+            input.next();
+            Some(Exp::UnExp {
+                op,
+                rhs: Box::new(unbox(
+                    parse_exp_inner(input, 20 /* unary op precedence */),
+                    &mut result_span,
+                    &mut errors,
+                )),
+            })
+        }
         x => {
             expected_got_error_from_peek_result(
                 vec![TokenClass::Expression],
@@ -393,6 +430,23 @@ pub fn parse_exp_inner<'a, E: Clone + fmt::Debug>(
             Some((Ok(Token::Minus), _)) => BinOp::Sub,
             Some((Ok(Token::Star), _)) => BinOp::Mul,
             Some((Ok(Token::Slash), _)) => BinOp::Div,
+            Some((Ok(Token::IntDiv), _)) => BinOp::Idiv,
+            Some((Ok(Token::Hat), _)) => BinOp::Pow,
+            Some((Ok(Token::Modulo), _)) => BinOp::Mod,
+            Some((Ok(Token::BitAnd), _)) => BinOp::Band,
+            Some((Ok(Token::BitNot), _)) => BinOp::Bxor,
+            Some((Ok(Token::BitOr), _)) => BinOp::Bor,
+            Some((Ok(Token::RightShift), _)) => BinOp::Shr,
+            Some((Ok(Token::LeftShift), _)) => BinOp::Shl,
+            Some((Ok(Token::DotDot), _)) => BinOp::Concat,
+            Some((Ok(Token::LeftAngle), _)) => BinOp::Lt,
+            Some((Ok(Token::LessEquals), _)) => BinOp::Le,
+            Some((Ok(Token::RightAngle), _)) => BinOp::Gt,
+            Some((Ok(Token::GreaterEquals), _)) => BinOp::Ge,
+            Some((Ok(Token::Equals), _)) => BinOp::Eq,
+            Some((Ok(Token::NotEquals), _)) => BinOp::Neq,
+            Some((Ok(Token::And), _)) => BinOp::And,
+            Some((Ok(Token::Or), _)) => BinOp::Or,
             _ => break, // no longer an expression; bail
         };
 
@@ -432,7 +486,28 @@ pub fn parse_prefix_exp<'a, E: Clone + fmt::Debug>(
             lex_error(e, span, &mut result_span, &mut errors);
             None
         }
-        Some((Ok(Token::OParen), _)) => todo!(),
+        Some((Ok(Token::OParen), _)) => {
+            input.next();
+            let inner = unbox(parse_exp(input), &mut result_span, &mut errors);
+            match input.next() {
+                Some((Err(e), span)) => {
+                    // welp.
+                    lex_error(&e, &span, &mut result_span, &mut errors);
+                }
+                Some((Ok(Token::CParen), span)) => {
+                    update_span(&mut result_span, &span);
+                }
+                x => {
+                    expected_got_error_from_peek_result(
+                        vec![TokenClass::CParen],
+                        x.as_ref(),
+                        &mut result_span,
+                        &mut errors,
+                    );
+                }
+            }
+            Some(PrefixExp::Parens(Box::new(inner)))
+        }
         Some((Ok(Token::Ident(x)), span)) => {
             update_span(&mut result_span, span);
             let str = (*x).into();
@@ -712,6 +787,95 @@ pub fn parse_stat<'a, E: Clone + fmt::Debug>(
                         None // Don't report an extra error, just keep recovering
                     }
                 }
+            }
+            Some((Ok(Token::If), span)) => {
+                input.next();
+                let main_cond = unbox(parse_exp(input), &mut result_span, &mut errors);
+                match input.peek() {
+                    Some((Err(e), span)) => {
+                        lex_error(e, span, &mut result_span, &mut errors);
+                        input.next();
+                    }
+                    Some((Ok(Token::Then), _)) => {
+                        // good!
+                        input.next();
+                    }
+                    x @ Some((Ok(Token::Do | Token::Colon), _)) => {
+                        // well. that's the wrong block start.
+                        expected_got_error_from_peek_result(
+                            vec![TokenClass::Then],
+                            x,
+                            &mut result_span,
+                            &mut errors,
+                        );
+                        input.next(); // but we're gonna assume they *intended* `then` and just eat the token anyway
+                    }
+                    x => {
+                        // annnnd they forgot entirely and just started the body. Oh well.
+                        expected_got_error_from_peek_result(
+                            vec![TokenClass::Then],
+                            x,
+                            &mut result_span,
+                            &mut errors,
+                        );
+                    }
+                }
+                let main_block = unbox(parse_block(input), &mut result_span, &mut errors);
+                let mut else_block = None;
+                loop {
+                    match input.next() {
+                        Some((Err(e), span)) => {
+                            lex_error(&e, &span, &mut result_span, &mut errors);
+                        }
+                        Some((Ok(Token::End), span)) => {
+                            // yay! we're done!
+                            update_span(&mut result_span, &span);
+                            break;
+                        }
+                        x @ Some((Ok(Token::ElseIf), _)) => {
+                            if else_block.is_some() {
+                                // we already saw else; we should be done.
+                                expected_got_error_from_peek_result(
+                                    vec![TokenClass::EndOfBlock],
+                                    x.as_ref(),
+                                    &mut result_span,
+                                    &mut errors,
+                                );
+                            }
+                            todo!();
+                        }
+                        x @ Some((Ok(Token::Else), _)) => {
+                            if else_block.is_some() {
+                                // we already saw else; we should be done.
+                                expected_got_error_from_peek_result(
+                                    vec![TokenClass::EndOfBlock],
+                                    x.as_ref(),
+                                    &mut result_span,
+                                    &mut errors,
+                                );
+                            }
+                            else_block = Some(Box::new(unbox(
+                                parse_block(input),
+                                &mut result_span,
+                                &mut errors,
+                            )));
+                        }
+                        x => {
+                            // ... how did we get here?
+                            expected_got_error_from_peek_result(
+                                vec![TokenClass::EndOfBlock],
+                                x.as_ref(),
+                                &mut result_span,
+                                &mut errors,
+                            );
+                        }
+                    }
+                }
+                Some(Stat::If {
+                    main: (main_cond, Box::new(main_block)),
+                    elseifs: vec![],
+                    else_block,
+                })
             }
             x => {
                 expected_got_error_from_peek_result(

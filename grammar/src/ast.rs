@@ -3,6 +3,7 @@ use core::{
     fmt::Write,
     ops::{Deref, DerefMut},
 };
+use std::bstr::ByteStr;
 
 use alloc::{borrow::Cow, boxed::Box, vec::Vec};
 use logos::Span;
@@ -296,7 +297,7 @@ impl fmt::Display for Var<'_> {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub enum Exp<'src> {
     Nil,
     False,
@@ -318,6 +319,39 @@ pub enum Exp<'src> {
         rhs: Box<Spanned<Exp<'src>>>,
     },
     Error,
+}
+
+impl fmt::Debug for Exp<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // mostly auto-generated, with small tweaks
+        match self {
+            Self::Nil => write!(f, "Nil"),
+            Self::False => write!(f, "False"),
+            Self::True => write!(f, "True"),
+            Self::NumeralInt(arg0) => f.debug_tuple("NumeralInt").field(arg0).finish(),
+            Self::NumeralFloat(arg0) => f.debug_tuple("NumeralFloat").field(arg0).finish(),
+            Self::LiteralString(arg0) => f
+                .debug_tuple("LiteralString")
+                .field(&arg0.as_ref().map(|x| ByteStr::new(x)))
+                .finish(),
+            Self::VarArg => write!(f, "VarArg"),
+            Self::FunctionDef(arg0) => f.debug_tuple("FunctionDef").field(arg0).finish(),
+            Self::PrefixExp(arg0) => f.debug_tuple("PrefixExp").field(arg0).finish(),
+            Self::TableConstructor(arg0) => f.debug_tuple("TableConstructor").field(arg0).finish(),
+            Self::BinExp { lhs, op, rhs } => f
+                .debug_struct("BinExp")
+                .field("lhs", lhs)
+                .field("op", op)
+                .field("rhs", rhs)
+                .finish(),
+            Self::UnExp { op, rhs } => f
+                .debug_struct("UnExp")
+                .field("op", op)
+                .field("rhs", rhs)
+                .finish(),
+            Self::Error => write!(f, "Error"),
+        }
+    }
 }
 
 impl Exp<'_> {

@@ -1,5 +1,5 @@
 #![allow(incomplete_features)] // Remove these if they're breaking more than they're fixing
-#![feature(lazy_type_alias)]
+#![feature(bstr, lazy_type_alias)]
 
 extern crate alloc;
 
