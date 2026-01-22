@@ -262,7 +262,9 @@ impl HirConversionContext {
             ast::Stat::Function { name, body } => todo!(),
             ast::Stat::LocalFunction { name, body } => todo!(),
             ast::Stat::Local { names, exps } => todo!(),
-            ast::Stat::Error => unimplemented!("errors should be handled before attempting HIR translation"),
+            ast::Stat::Error => {
+                unimplemented!("errors should be handled before attempting HIR translation")
+            }
         }
     }
 
@@ -284,7 +286,10 @@ impl HirConversionContext {
                 lhs: Box::new(self.convert_prefix_exp((**lhs).as_ref())),
                 idx: Box::new(self.convert_exp((**idx).as_ref())),
             },
-            ast::Var::Path { lhs, member } => todo!(),
+            ast::Var::Path { lhs, member } => Var::Path {
+                lhs: Box::new(self.convert_prefix_exp((**lhs).as_ref())),
+                field: member.clone(),
+            },
         })
     }
 
@@ -332,7 +337,9 @@ impl HirConversionContext {
                 rhs: Box::new(self.convert_exp((**rhs).as_ref())),
             },
             ast::Exp::UnExp { op, rhs } => todo!(),
-            ast::Exp::Error => unimplemented!("errors should be handled before attempting HIR translation"),
+            ast::Exp::Error => {
+                unimplemented!("errors should be handled before attempting HIR translation")
+            }
         })
     }
 
@@ -344,7 +351,9 @@ impl HirConversionContext {
             ast::PrefixExp::Var(x) => Exp::Var(self.convert_var(x.as_ref())),
             ast::PrefixExp::FunctionCall(spanned) => todo!(),
             ast::PrefixExp::Parens(spanned) => todo!(),
-            ast::PrefixExp::Error => unimplemented!("errors should be handled before attempting HIR translation"),
+            ast::PrefixExp::Error => {
+                unimplemented!("errors should be handled before attempting HIR translation")
+            }
         })
     }
 
@@ -355,7 +364,9 @@ impl HirConversionContext {
                 .map(|x| x.iter().map(|x| self.convert_exp(x.as_ref())).collect()),
             ast::Args::TableConstructor(x) => todo!(),
             ast::Args::String(x) => todo!(),
-            ast::Args::Error => unimplemented!("errors should be handled before attempting HIR translation"),
+            ast::Args::Error => {
+                unimplemented!("errors should be handled before attempting HIR translation")
+            }
         }
     }
 

@@ -624,7 +624,38 @@ pub fn parse_prefix_exp<'a, E: Clone + fmt::Debug>(
                     result_span.clone().unwrap_or(SYNTHETIC_SPAN)
                 ));
             }
-            Some((Ok(Token::Dot), _)) => todo!(),
+            Some((Ok(Token::Dot), _)) => {
+                // Path-like indexing
+                let old_span = result_span.clone().unwrap_or(SYNTHETIC_SPAN);
+                input.next();
+                let member = match input.next() {
+                    Some((Err(e), span)) => {
+                        // welp.
+                        lex_error(&e, &span, &mut result_span, &mut errors);
+                        synth!("<error>".into())
+                    }
+                    Some((Ok(Token::Ident(x)), span)) => {
+                        update_span(&mut result_span, &span);
+                        s!(x.into(), span)
+                    }
+                    x => {
+                        expected_got_error_from_peek_result(
+                            vec![TokenClass::CSquare],
+                            x.as_ref(),
+                            &mut result_span,
+                            &mut errors,
+                        );
+                        synth!("<error>".into())
+                    }
+                };
+                lhs = PrefixExp::Var(s!(
+                    Var::Path {
+                        lhs: Box::new(s!(lhs, old_span)),
+                        member
+                    },
+                    result_span.clone().unwrap_or(SYNTHETIC_SPAN)
+                ));
+            }
             Some((Ok(Token::OSquare), _)) => {
                 // Array-like indexing
                 let old_span = result_span.clone().unwrap_or(SYNTHETIC_SPAN); // should always have something if we got here, but just in case
