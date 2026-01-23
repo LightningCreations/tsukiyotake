@@ -6,6 +6,7 @@ use alloc::string::String;
 use alloc::{boxed::Box, vec::Vec};
 use alloc::{format, vec};
 use hashbrown::HashSet;
+use tsukiyotake_grammar::s;
 
 use crate::ast;
 pub use crate::ast::{BinOp, FuncName, List, Spanned, UnOp};
@@ -38,8 +39,7 @@ pub enum Stat<'src> {
         cond: Spanned<Exp<'src>>,
     },
     If {
-        main: (Spanned<Exp<'src>>, Box<Spanned<Block<'src>>>),
-        elseifs: Vec<(Spanned<Exp<'src>>, Box<Spanned<Block<'src>>>)>,
+        cond_blocks: Vec<(Spanned<Exp<'src>>, Box<Spanned<Block<'src>>>)>,
         else_block: Option<Box<Spanned<Block<'src>>>>,
     },
     ForNumerical {
@@ -251,7 +251,34 @@ impl HirConversionContext {
                 main,
                 elseifs,
                 else_block,
-            } => todo!(),
+            } => {
+                let mut conds = vec![main];
+                conds.extend(elseifs.iter());
+                let cond_blocks = conds
+                    .into_iter()
+                    .map(|(cond, block)| {
+                        let cond = self.convert_exp(cond.as_ref());
+                        let ctx = self.descend();
+                        let block = Box::new((**block).as_ref().map(|x| ctx.convert_block(x)));
+                        (cond, block)
+                    })
+                    .collect();
+
+                let else_block = else_block.as_ref().map(|x| {
+                    Box::new((**x).as_ref().map(|block| {
+                        let ctx = self.descend();
+                        ctx.convert_block(block)
+                    }))
+                });
+
+                vec![s!(
+                    Stat::If {
+                        cond_blocks,
+                        else_block,
+                    },
+                    ast.1
+                )]
+            }
             ast::Stat::ForNumerical {
                 var,
                 initial,
@@ -354,7 +381,9 @@ impl HirConversionContext {
         ast.map(|x| match x {
             ast::PrefixExp::Var(x) => Exp::Var(self.convert_var(x.as_ref())),
             ast::PrefixExp::FunctionCall(spanned) => todo!(),
-            ast::PrefixExp::Parens(x) => Exp::CollapseMultival(Box::new(self.convert_exp((**x).as_ref()))),
+            ast::PrefixExp::Parens(x) => {
+                Exp::CollapseMultival(Box::new(self.convert_exp((**x).as_ref())))
+            }
             ast::PrefixExp::Error => {
                 unimplemented!("errors should be handled before attempting HIR translation")
             }

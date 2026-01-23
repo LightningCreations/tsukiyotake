@@ -1,6 +1,7 @@
 use alloc::format;
 use alloc::vec;
 use hashbrown::HashMap;
+use tsukiyotake_grammar::s;
 
 use crate::{bb, hir, mir::*};
 
@@ -107,8 +108,11 @@ impl MirConverter {
 
     fn convert_exp(&mut self, exp: Spanned<&hir::Exp>) -> Expr {
         match exp.0 {
+            hir::Exp::True => Expr::Boolean(true),
+            hir::Exp::False => Expr::Boolean(false),
             hir::Exp::NumeralInt(x) => Expr::Integer(x.0),
-            hir::Exp::LiteralString(x) => Expr::String(x.0.clone().to_vec()), // TODO: why doesn't the MIR use Box<u8>?
+            hir::Exp::NumeralFloat(x) => Expr::Float(x.to_bits()),
+            hir::Exp::LiteralString(x) => Expr::String(x.0.clone().to_vec()),
             hir::Exp::Var(x) => match &**x {
                 hir::Var::Name(x) => Expr::Var(self.get_var(&**x)),
                 hir::Var::Path { lhs, field } => {
@@ -155,6 +159,16 @@ impl MirConverter {
                 },
                 exp.1,
             )),
+            hir::Exp::UnExp { op, rhs } => Expr::UnaryOp(s!(
+                UnaryExpr {
+                    op: *op,
+                    expr: Box::new(self.convert_exp((**rhs).as_ref()))
+                },
+                exp.1
+            )),
+            hir::Exp::CollapseMultival(x) => {
+                Expr::Extract(Box::new(self.convert_exp_multival((**x).as_ref())), 0)
+            }
             x => todo!("{x:?}"),
         }
     }
