@@ -18,6 +18,7 @@ use core::ptr::NonNull;
 use tsukiyotake_grammar::Span;
 use tsukiyotake_grammar::ast::BinOp;
 use tsukiyotake_grammar::ast::BinOpClass;
+use tsukiyotake_grammar::ast::UnOp;
 
 use crate::engine::table::Table;
 use crate::mir;
@@ -183,7 +184,7 @@ impl<'ctx> Value<'ctx> {
     pub const fn new_float(x: f64) -> Self {
         Self::new_unchecked(ValueInner {
             int: ValueInt {
-                int: x as u64,
+                int: x.to_bits(),
                 meta: TYPE_FLOAT,
             },
         })
@@ -267,9 +268,9 @@ impl<'ctx> Value<'ctx> {
 
                 UnpackedValue::Managed(mval)
             }
-            Type::Boolean => todo!(),
+            Type::Boolean => UnpackedValue::Bool(unsafe { self.0.int.int } != 0),
             Type::Int => UnpackedValue::Int(unsafe { self.0.int.int } as i64),
-            Type::Float => todo!(),
+            Type::Float => UnpackedValue::Float(f64::from_bits(unsafe { self.0.int.int })),
             Type::UnmanagedString => UnpackedValue::String(unsafe {
                 core::slice::from_raw_parts(
                     self.0.wide_ptr.ptr.cast(),
@@ -997,13 +998,22 @@ impl<'ctx> LuaEngine<'ctx> {
     pub fn do_tostring(&'ctx self, val: Value<'ctx>) -> Result<Value<'ctx>, LuaError<'ctx>> {
         // TODO: better parity with reference impl Lua tostring
         match val.unpack() {
+            // If we're already a string, do nothing
+            UnpackedValue::String(_) | UnpackedValue::Managed(ManagedValue::String(_)) => Ok(val),
             UnpackedValue::Int(x) => {
                 let result_global = x.to_string().into_bytes();
                 let mut result = Vec::new_in(self.alloc());
                 result.extend_from_slice(&result_global);
                 Ok(self.allocate_managed_value(ManagedString(result)))
             }
-            UnpackedValue::String(_) => Ok(val),
+            UnpackedValue::Float(x) => {
+                let result_global = x.to_string().into_bytes();
+                let mut result = Vec::new_in(self.alloc());
+                result.extend_from_slice(&result_global);
+                Ok(self.allocate_managed_value(ManagedString(result)))
+            }
+            UnpackedValue::Bool(true) => Ok(Value::string_literal(b"true")),
+            UnpackedValue::Bool(false) => Ok(Value::string_literal(b"false")),
             _ => todo!(),
         }
     }
@@ -1046,9 +1056,9 @@ impl<'ctx> LuaEngine<'ctx> {
             }
             mir::Expr::String(items) => Ok(Value::string_literal(items)),
             mir::Expr::Closure(closure_def) => todo!(),
-            mir::Expr::Boolean(_) => todo!(),
+            mir::Expr::Boolean(x) => Ok(Value::new_bool(*x)),
             mir::Expr::Integer(x) => Ok(Value::new_int(*x)),
-            mir::Expr::Float(_) => todo!(),
+            mir::Expr::Float(x) => Ok(Value::new_float(f64::from_bits(*x))),
             mir::Expr::Index(spanned) => {
                 let base = self.eval(&spanned.0.base, frame)?;
                 let index = match &spanned.0.index {
@@ -1080,32 +1090,72 @@ impl<'ctx> LuaEngine<'ctx> {
                     },
                 }
             }
-            mir::Expr::UnaryOp(spanned) => todo!(),
-            mir::Expr::BinaryOp(spanned) => {
-                let lhs = self.eval(&spanned.0.left, frame)?;
-                let rhs = self.eval(&spanned.0.right, frame)?;
+            mir::Expr::UnaryOp(x) => {
+                let rhs = self.eval(&x.0.expr, frame)?;
 
-                match (spanned.op.class(), lhs.unpack(), rhs.unpack()) {
-                    (
-                        BinOpClass::NormalArithmetic,
-                        UnpackedValue::Int(lhs),
-                        UnpackedValue::Int(rhs),
-                    ) => Ok(Value::new_int(match spanned.op {
-                        BinOp::Add => lhs.wrapping_add(rhs),
-                        BinOp::Sub => lhs.wrapping_sub(rhs),
-                        BinOp::Mul => lhs.wrapping_mul(rhs),
-                        BinOp::Idiv => {
-                            // TODO: replace with wrapping_div_floor once it's available
-                            if rhs == -1 {
-                                lhs.wrapping_div(rhs)
-                            } else {
-                                lhs.div_floor(rhs)
+                match (x.op, rhs.unpack()) {
+                    (UnOp::Not, _) => Ok(Value::new_bool(!rhs.bool_test())),
+                    x => todo!("{x:?}"),
+                }
+            }
+            mir::Expr::BinaryOp(x) => {
+                if x.op.class() != BinOpClass::Logical {
+                    let lhs = self.eval(&x.0.left, frame)?;
+                    let rhs = self.eval(&x.0.right, frame)?;
+
+                    match (x.op.class(), lhs.unpack(), rhs.unpack()) {
+                        (
+                            BinOpClass::NormalArithmetic,
+                            UnpackedValue::Int(lhs),
+                            UnpackedValue::Int(rhs),
+                        ) => Ok(Value::new_int(match x.op {
+                            BinOp::Add => lhs.wrapping_add(rhs),
+                            BinOp::Sub => lhs.wrapping_sub(rhs),
+                            BinOp::Mul => lhs.wrapping_mul(rhs),
+                            BinOp::Idiv => {
+                                // TODO: replace with wrapping_div_floor once it's available
+                                if rhs == -1 {
+                                    lhs.wrapping_div(rhs)
+                                } else {
+                                    lhs.div_floor(rhs)
+                                }
                             }
+                            BinOp::Mod => lhs % rhs, // TODO: replace with rem_floor once it's available (because this is technically wrong)
+                            _ => unreachable!(),
+                        })),
+                        (
+                            BinOpClass::SpecialArithmetic,
+                            UnpackedValue::Float(lhs),
+                            UnpackedValue::Float(rhs),
+                        ) => {
+                            Ok(Value::new_float(match x.op {
+                                BinOp::Div => lhs / rhs, // TODO: handle division by 0
+                                BinOp::Pow => lhs.powf(rhs),
+                                _ => unreachable!(),
+                            }))
                         }
-                        BinOp::Mod => lhs % rhs, // TODO: replace with rem_floor once it's available (because this is technically wrong)
+                        (
+                            BinOpClass::Concat,
+                            UnpackedValue::String(lhs),
+                            UnpackedValue::String(rhs),
+                        ) => Ok(self.allocate_managed_value(ManagedString(
+                            ([lhs, rhs].concat()).to_vec_in(self.alloc()),
+                        ))),
+                        x => todo!("{x:?}"),
+                    }
+                } else {
+                    let lhs = self.eval(&x.0.left, frame)?;
+                    let lhs_truth = lhs.bool_test();
+                    let use_lhs = match x.op {
+                        BinOp::And => !lhs_truth,
+                        BinOp::Or => lhs_truth,
                         _ => unreachable!(),
-                    })),
-                    _ => todo!(),
+                    };
+                    Ok(if use_lhs {
+                        lhs
+                    } else {
+                        self.eval(&x.0.right, frame)?
+                    })
                 }
             }
         }
@@ -1115,7 +1165,7 @@ impl<'ctx> LuaEngine<'ctx> {
         &'ctx self,
         mval: &'ctx mir::Multival,
         frame: &LuaFrame<'ctx>,
-    ) -> Result<Vec<Value<'ctx>>, LuaError<'ctx>> {
+    ) -> Result<Vec<'ctx, Value<'ctx>>, LuaError<'ctx>> {
         match mval {
             mir::Multival::Empty => Ok(Vec::new_in(self.alloc())),
             mir::Multival::FixedList(exprs) => {

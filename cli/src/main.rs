@@ -61,7 +61,7 @@ fn print<'ctx>(
                     .unwrap()
             )
         );
-        sep = "\t";
+        sep = " ";
     }
     println!();
     Ok(TsuVec::new_in(engine.alloc()))
