@@ -777,6 +777,45 @@ pub fn parse_att_name<'a, E: Clone + fmt::Debug>(
     )
 }
 
+fn eat_then<'a, E: Clone + fmt::Debug>(
+    input: &mut Peekable<impl Iterator<Item = (Result<Token<'a>, E>, Span)>>,
+) -> ParseResult<'a, (), E> {
+    let mut result_span = None;
+    let mut errors = vec![];
+
+    match input.peek() {
+        Some((Err(e), span)) => {
+            lex_error(e, span, &mut result_span, &mut errors);
+            input.next();
+        }
+        Some((Ok(Token::Then), _)) => {
+            // good!
+            input.next();
+        }
+        x @ Some((Ok(Token::Do | Token::Colon), _)) => {
+            // well. that's the wrong block start.
+            expected_got_error_from_peek_result(
+                vec![TokenClass::Then],
+                x,
+                &mut result_span,
+                &mut errors,
+            );
+            input.next(); // but we're gonna assume they *intended* `then` and just eat the token anyway
+        }
+        x => {
+            // annnnd they forgot entirely and just started the body. Oh well.
+            expected_got_error_from_peek_result(
+                vec![TokenClass::Then],
+                x,
+                &mut result_span,
+                &mut errors,
+            );
+        }
+    }
+
+    finish(s!((), result_span.unwrap_or(SYNTHETIC_SPAN)), errors)
+}
+
 pub fn parse_stat<'a, E: Clone + fmt::Debug>(
     input: &mut Peekable<impl Iterator<Item = (Result<Token<'a>, E>, Span)>>,
 ) -> ParseResult<'a, Stat<'a>, E> {
@@ -825,7 +864,7 @@ pub fn parse_stat<'a, E: Clone + fmt::Debug>(
                                     // yay!
                                     update_span(&mut result_span, &span);
                                 }
-                                Some((Ok(Token::Assign), span)) => {
+                                Some((Ok(Token::Assign), _)) => {
                                     // also yay! we're done!
                                     // We're not updating the span on purpose. The variable span shouldn't include the assignment sigil, and the next expression will update the span when it appears.
                                     break;
@@ -906,39 +945,12 @@ pub fn parse_stat<'a, E: Clone + fmt::Debug>(
                     }
                 }
             }
-            Some((Ok(Token::If), span)) => {
+            Some((Ok(Token::If), _)) => {
                 input.next();
                 let main_cond = unbox(parse_exp(input), &mut result_span, &mut errors);
-                match input.peek() {
-                    Some((Err(e), span)) => {
-                        lex_error(e, span, &mut result_span, &mut errors);
-                        input.next();
-                    }
-                    Some((Ok(Token::Then), _)) => {
-                        // good!
-                        input.next();
-                    }
-                    x @ Some((Ok(Token::Do | Token::Colon), _)) => {
-                        // well. that's the wrong block start.
-                        expected_got_error_from_peek_result(
-                            vec![TokenClass::Then],
-                            x,
-                            &mut result_span,
-                            &mut errors,
-                        );
-                        input.next(); // but we're gonna assume they *intended* `then` and just eat the token anyway
-                    }
-                    x => {
-                        // annnnd they forgot entirely and just started the body. Oh well.
-                        expected_got_error_from_peek_result(
-                            vec![TokenClass::Then],
-                            x,
-                            &mut result_span,
-                            &mut errors,
-                        );
-                    }
-                }
+                unbox(eat_then(input), &mut result_span, &mut errors);
                 let main_block = unbox(parse_block(input), &mut result_span, &mut errors);
+                let mut elseifs = Vec::new();
                 let mut else_block = None;
                 loop {
                     match input.next() {
@@ -960,7 +972,11 @@ pub fn parse_stat<'a, E: Clone + fmt::Debug>(
                                     &mut errors,
                                 );
                             }
-                            todo!();
+                            // Alright, so we need an expression, a "then", and a block. Easy, right?
+                            let cond = unbox(parse_exp(input), &mut result_span, &mut errors);
+                            unbox(eat_then(input), &mut result_span, &mut errors);
+                            let block = unbox(parse_block(input), &mut result_span, &mut errors);
+                            elseifs.push((cond, Box::new(block)));
                         }
                         x @ Some((Ok(Token::Else), _)) => {
                             if else_block.is_some() {
@@ -991,7 +1007,7 @@ pub fn parse_stat<'a, E: Clone + fmt::Debug>(
                 }
                 Some(Stat::If {
                     main: (main_cond, Box::new(main_block)),
-                    elseifs: vec![],
+                    elseifs,
                     else_block,
                 })
             }
