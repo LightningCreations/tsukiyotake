@@ -84,7 +84,11 @@ fn run_file<'ctx>(engine: &'ctx LuaEngine<'ctx>, mir: &'ctx FunctionDef) {
         unreachable!()
     };
     match engine.call_func(func, &[]) {
-        Ok(_) => {}
+        Ok(x) => {
+            print(engine, x.as_slice())
+                .map(|_| ())
+                .unwrap_or_else(|e| eprintln!("{:?}", engine.debug_error(e)));
+        }
         Err(e) => eprintln!("{:?}", engine.debug_error(e)),
     }
 }
