@@ -352,11 +352,15 @@ impl MirConverter {
         for stat in &block.stats {
             self.write_stat(stat.as_ref());
         }
-        if block.retstat.is_none() {
+        if let Some(retstat) = &block.retstat {
+            let terminator = retstat
+                .as_ref()
+                .map(|x| Terminator::Return(self.convert_list(&x)));
+            self.basic_blocks
+                .push(self.cur_block.finish_and_reset(Some(terminator)));
+        } else {
             self.basic_blocks
                 .push(self.cur_block.finish_and_reset(terminator));
-        } else {
-            todo!()
         }
     }
 
