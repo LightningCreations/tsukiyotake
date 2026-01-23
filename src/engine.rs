@@ -900,11 +900,33 @@ impl<'ctx> LuaEngine<'ctx> {
                         crate::mir::Terminator::RtError(spanned, multival) => ControlFlow::Break(
                             Err(self.error(Value::string_literal(spanned.as_bytes()))),
                         ),
-                        crate::mir::Terminator::Branch(expr, jump_target, jump_target1) => todo!(),
+                        crate::mir::Terminator::Branch(expr, true_branch, false_branch) => {
+                            let result = wtry_cf!(self.eval(expr, &last));
+                            if result.bool_test() {
+                                last.current_instruction.set(0);
+                                last.current_block
+                                    .set(true_branch.targ_bb.id().get() as usize - 1);
+
+                                for (a, b) in &true_branch.remaps {
+                                    let val = last.vars[a.val() as usize].get().cloned().unwrap();
+                                    last.vars[b.val() as usize].set(val).ok().unwrap(); // TODO: Print repr of Value and make this make sense
+                                }
+                            } else {
+                                last.current_instruction.set(0);
+                                last.current_block
+                                    .set(false_branch.targ_bb.id().get() as usize - 1);
+
+                                for (a, b) in &false_branch.remaps {
+                                    let val = last.vars[a.val() as usize].get().cloned().unwrap();
+                                    last.vars[b.val() as usize].set(val).ok().unwrap(); // TODO: Print repr of Value and make this make sense
+                                }
+                            }
+                            ControlFlow::Continue(())
+                        }
                         crate::mir::Terminator::Jump(jump_target) => {
                             last.current_instruction.set(0);
                             last.current_block
-                                .set(jump_target.targ_bb.id().get() as usize);
+                                .set(jump_target.targ_bb.id().get() as usize - 1);
 
                             for (a, b) in &jump_target.remaps {
                                 let val = last.vars[a.val() as usize].get().cloned().unwrap();
