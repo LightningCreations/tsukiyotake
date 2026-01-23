@@ -13,8 +13,8 @@ pub use crate::ast::{BinOp, FuncName, List, Spanned, UnOp};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Block<'src> {
-    pub locals: HashSet<String>,
-    pub import_locals: HashSet<String>,
+    pub locals: HashSet<Cow<'src, str>>,
+    pub import_locals: HashSet<Cow<'src, str>>,
     pub stats: Vec<Spanned<Stat<'src>>>,
     pub retstat: Option<List<Exp<'src>>>,
 }
@@ -55,15 +55,9 @@ pub enum Stat<'src> {
         block: Box<Spanned<Block<'src>>>,
     },
     Local {
-        names: List<AttName<'src>>,
+        names: List<Cow<'src, str>>,
         exps: Option<List<Exp<'src>>>,
     },
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct AttName<'src> {
-    pub name: Spanned<Cow<'src, str>>,
-    pub attrib: Option<Spanned<Cow<'src, str>>>,
 }
 
 // Otherwise known as lvalue
@@ -134,14 +128,14 @@ pub struct Field<'src> {
 }
 
 #[derive(Clone)]
-pub struct HirConversionContext {
-    parent_locals: HashSet<String>,
-    import_locals: HashSet<String>,
-    locals: HashSet<String>,
+pub struct HirConversionContext<'src> {
+    parent_locals: HashSet<Cow<'src, str>>,
+    import_locals: HashSet<Cow<'src, str>>,
+    locals: HashSet<Cow<'src, str>>,
     synthetic_counter: Rc<AtomicUsize>,
 }
 
-impl HirConversionContext {
+impl<'src> HirConversionContext<'src> {
     pub fn new() -> Self {
         Self {
             parent_locals: HashSet::new(),
@@ -151,7 +145,7 @@ impl HirConversionContext {
         }
     }
 
-    pub fn convert_block<'src>(mut self, ast: &ast::Block<'src>) -> Block<'src> {
+    pub fn convert_block(mut self, ast: &'src ast::Block<'src>) -> Block<'src> {
         let stats = ast
             .stats
             .iter()
@@ -170,9 +164,9 @@ impl HirConversionContext {
     }
 
     // ast::Stat::Empty is converted into None
-    pub fn convert_stat<'src>(
+    pub fn convert_stat(
         &mut self,
-        ast: Spanned<&ast::Stat<'src>>,
+        ast: Spanned<&'src ast::Stat<'src>>,
     ) -> Vec<Spanned<Stat<'src>>> {
         match &*ast {
             ast::Stat::Empty => vec![],
@@ -194,10 +188,7 @@ impl HirConversionContext {
                     // create local for object
                     let local = self.new_local();
                     stats.push(synth!(Stat::Local {
-                        names: synth!(vec![synth!(AttName {
-                            name: synth!(local.clone()),
-                            attrib: None,
-                        })]),
+                        names: synth!(vec![synth!(local.clone())]),
                         exps: Some(synth!(vec![self.convert_prefix_exp((*call.lhs).as_ref()),])),
                     }));
                     // add self parameter
@@ -283,14 +274,30 @@ impl HirConversionContext {
             ast::Stat::ForGeneric { names, exps, block } => todo!(),
             ast::Stat::Function { name, body } => todo!(),
             ast::Stat::LocalFunction { name, body } => todo!(),
-            ast::Stat::Local { names, exps } => todo!(),
+            ast::Stat::Local { names, exps } => {
+                vec![s!(
+                    Stat::Local {
+                        names: names.as_ref().map(|x| x
+                            .iter()
+                            .map(|x| x.clone().map(|x| {
+                                self.locals.insert(x.name.0.clone());
+                                x.name.0
+                            }))
+                            .collect()),
+                        exps: exps.as_ref().map(|x| x
+                            .as_ref()
+                            .map(|x| x.iter().map(|x| self.convert_exp(x.as_ref())).collect())),
+                    },
+                    ast.1
+                )]
+            }
             ast::Stat::Error => {
                 unimplemented!("errors should be handled before attempting HIR translation")
             }
         }
     }
 
-    pub fn convert_var<'src>(&mut self, ast: Spanned<&ast::Var<'src>>) -> Spanned<Var<'src>> {
+    pub fn convert_var(&mut self, ast: Spanned<&'src ast::Var<'src>>) -> Spanned<Var<'src>> {
         ast.map(|x| match x {
             ast::Var::Name(x) => {
                 if self.in_scope(x) {
@@ -313,7 +320,7 @@ impl HirConversionContext {
         })
     }
 
-    pub fn convert_exp<'src>(&mut self, ast: Spanned<&ast::Exp<'src>>) -> Spanned<Exp<'src>> {
+    pub fn convert_exp(&mut self, ast: Spanned<&'src ast::Exp<'src>>) -> Spanned<Exp<'src>> {
         ast.map(|x| match x {
             ast::Exp::Nil => Exp::Nil,
             ast::Exp::False => Exp::False,
@@ -366,9 +373,9 @@ impl HirConversionContext {
         })
     }
 
-    pub fn convert_prefix_exp<'src>(
+    pub fn convert_prefix_exp(
         &mut self,
-        ast: Spanned<&ast::PrefixExp<'src>>,
+        ast: Spanned<&'src ast::PrefixExp<'src>>,
     ) -> Spanned<Exp<'src>> {
         ast.map(|x| match x {
             ast::PrefixExp::Var(x) => Exp::Var(self.convert_var(x.as_ref())),
@@ -382,7 +389,7 @@ impl HirConversionContext {
         })
     }
 
-    pub fn convert_args<'src>(&mut self, ast: Spanned<&ast::Args<'src>>) -> List<Exp<'src>> {
+    pub fn convert_args(&mut self, ast: Spanned<&'src ast::Args<'src>>) -> List<Exp<'src>> {
         match &*ast {
             ast::Args::List(list) => list
                 .as_ref()
@@ -396,13 +403,13 @@ impl HirConversionContext {
     }
 
     // why does this take &mut self? because it will take steps to place things in scope if they're in the parent scope :)
-    fn in_scope(&mut self, var: &str) -> bool {
+    fn in_scope(&mut self, var: &'src str) -> bool {
         var == "_ENV"
             || self.locals.contains(var)
             || self.import_locals.contains(var)
             || if self.parent_locals.contains(var) {
                 // side effects in a conditional? scandalous
-                self.import_locals.insert(var.to_owned());
+                self.import_locals.insert(var.into());
                 true
             } else {
                 false
@@ -418,13 +425,13 @@ impl HirConversionContext {
         }
     }
 
-    fn new_local<'src>(&mut self) -> Cow<'src, str> {
+    fn new_local(&mut self) -> Cow<'src, str> {
         let name = format!(
             "$synth_{}",
             self.synthetic_counter
                 .fetch_add(1, core::sync::atomic::Ordering::Relaxed)
         );
-        self.locals.insert(name.clone());
+        self.locals.insert(name.clone().into());
         name.into()
     }
 }

@@ -1,3 +1,4 @@
+use alloc::borrow::Cow;
 use alloc::format;
 use alloc::vec;
 use hashbrown::HashMap;
@@ -34,9 +35,9 @@ impl UnbuiltBasicBlock {
 }
 
 #[derive(Debug)]
-pub struct MirConverter {
+pub struct MirConverter<'src> {
     debug_info: FunctionDebugInfo,
-    vars_by_name: HashMap<String, SsaVarId>,
+    vars_by_name: HashMap<Cow<'src, str>, SsaVarId>,
     num_upvars: u32,
     num_params: u32,
     variadic: bool,
@@ -46,17 +47,17 @@ pub struct MirConverter {
     next_block: BasicBlockId,
 }
 
-impl MirConverter {
+impl<'src> MirConverter<'src> {
     pub fn new(
-        name: Spanned<String>,
-        upvars: &[Spanned<String>],
-        params: &[Spanned<String>],
+        name: Spanned<Cow<'src, str>>,
+        upvars: &[Spanned<Cow<'src, str>>],
+        params: &[Spanned<Cow<'src, str>>],
         variadic: bool,
     ) -> Self {
         let mut result = Self {
             debug_info: FunctionDebugInfo {
                 var_names_map: BTreeMap::new(),
-                function_canon_name: name,
+                function_canon_name: name.map(|x| x.into()),
             },
             vars_by_name: HashMap::new(),
             num_upvars: upvars.len() as u32,
@@ -83,10 +84,12 @@ impl MirConverter {
         result
     }
 
-    fn add_var(&mut self, name: Spanned<String>) -> SsaVarId {
+    fn add_var(&mut self, name: Spanned<Cow<'src, str>>) -> SsaVarId {
         let var = self.next_var;
         self.vars_by_name.insert(name.0.clone(), var);
-        self.debug_info.var_names_map.insert(var, name);
+        self.debug_info
+            .var_names_map
+            .insert(var, name.map(|x| x.into()));
         self.next_var = var.next();
         var
     }
@@ -96,7 +99,7 @@ impl MirConverter {
         Self::new(synth!("<root>".into()), &[], &[], true)
     }
 
-    fn get_var(&mut self, name: &str) -> SsaVarId {
+    fn get_var(&mut self, name: &'src str) -> SsaVarId {
         if let Some(x) = self.vars_by_name.get(name) {
             *x
         } else {
@@ -104,7 +107,7 @@ impl MirConverter {
         }
     }
 
-    fn convert_exp(&mut self, exp: Spanned<&hir::Exp>) -> Expr {
+    fn convert_exp(&mut self, exp: Spanned<&'src hir::Exp<'src>>) -> Expr {
         match exp.0 {
             hir::Exp::Nil => Expr::Nil,
             hir::Exp::False => Expr::Boolean(false),
@@ -172,14 +175,14 @@ impl MirConverter {
         }
     }
 
-    fn convert_exp_multival(&mut self, exp: Spanned<&hir::Exp>) -> Multival {
+    fn convert_exp_multival(&mut self, exp: Spanned<&'src hir::Exp<'src>>) -> Multival {
         match exp.0 {
             hir::Exp::FunctionCall(_) => todo!(),
             _ => Multival::FixedList(vec![self.convert_exp(exp)]),
         }
     }
 
-    fn convert_list(&mut self, exps: &[Spanned<hir::Exp>]) -> Multival {
+    fn convert_list(&mut self, exps: &'src [Spanned<hir::Exp<'src>>]) -> Multival {
         let Some((last, first)) = exps.split_last() else {
             return Multival::Empty;
         };
@@ -188,7 +191,7 @@ impl MirConverter {
         Multival::Concat(vec![Multival::FixedList(first), last])
     }
 
-    fn write_stat(&mut self, stat: Spanned<&hir::Stat>) {
+    fn write_stat(&mut self, stat: Spanned<&'src hir::Stat<'src>>) {
         match stat.0 {
             hir::Stat::Assign { vars, exps } => {
                 // Figure out what assignments we need to make first
@@ -216,9 +219,9 @@ impl MirConverter {
                     .enumerate()
                     .map(|(i, x)| {
                         if let hir::Var::Name(x) = &**x {
-                            self.add_var(x.as_ref().map(|x| x.clone().into_owned()))
+                            self.add_var(x.as_ref().map(|x| x.clone()))
                         } else {
-                            self.add_var(synth!(format!("<temporary assignment index {i}>")))
+                            self.add_var(synth!(format!("<temporary assignment index {i}>").into()))
                         }
                     })
                     .collect();
@@ -338,6 +341,22 @@ impl MirConverter {
                 }
                 self.cur_block.id = cur_block_id;
             }
+            hir::Stat::Local { names, exps } => {
+                for name in &names.0 {
+                    self.add_var(name.clone());
+                }
+                if let Some(exps) = exps {
+                    let result = self.convert_list(exps);
+                    let statement = s!(
+                        Statement::Multideclare(
+                            names.0.iter().map(|x| self.get_var(&x.0)).collect(),
+                            result
+                        ),
+                        stat.1
+                    );
+                    self.cur_block.push(statement);
+                }
+            }
             x => todo!("{x:?}"),
         }
     }
@@ -345,7 +364,7 @@ impl MirConverter {
     fn write_block_inner(
         &mut self,
         block_id: BasicBlockId,
-        block: &hir::Block,
+        block: &'src hir::Block<'src>,
         terminator: Option<Spanned<Terminator>>,
     ) {
         self.cur_block.id = block_id;
@@ -364,7 +383,7 @@ impl MirConverter {
         }
     }
 
-    pub fn write_block(&mut self, block: &hir::Block) {
+    pub fn write_block(&mut self, block: &'src hir::Block<'src>) {
         self.write_block_inner(self.next_block, block, None);
     }
 

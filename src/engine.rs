@@ -1037,6 +1037,7 @@ impl<'ctx> LuaEngine<'ctx> {
             }
             UnpackedValue::Bool(true) => Ok(Value::string_literal(b"true")),
             UnpackedValue::Bool(false) => Ok(Value::string_literal(b"false")),
+            UnpackedValue::Managed(ManagedValue::Nil) => Ok(Value::string_literal(b"nil")),
             _ => todo!(),
         }
     }
@@ -1164,6 +1165,19 @@ impl<'ctx> LuaEngine<'ctx> {
                         ) => Ok(self.allocate_managed_value(ManagedString(
                             ([lhs, rhs].concat()).to_vec_in(self.alloc()),
                         ))),
+                        (
+                            BinOpClass::Relational,
+                            UnpackedValue::Int(lhs),
+                            UnpackedValue::Int(rhs),
+                        ) => Ok(Value::new_bool(match x.op {
+                            BinOp::Eq => lhs == rhs,
+                            BinOp::Neq => lhs != rhs,
+                            BinOp::Lt => lhs < rhs,
+                            BinOp::Gt => lhs > rhs,
+                            BinOp::Le => lhs <= rhs,
+                            BinOp::Ge => lhs >= rhs,
+                            _ => unreachable!(),
+                        })),
                         x => todo!("{x:?}"),
                     }
                 } else {
