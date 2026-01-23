@@ -337,8 +337,10 @@ impl<'src> MirConverter<'src> {
                         .push(self.cur_block.finish_and_reset(Some(term)));
                 }
                 for (id, block) in code_block_ids.into_iter().zip(code_blocks) {
+                    self.next_block = id;
                     self.write_block_inner(id, block, Some(final_terminator.clone()));
                 }
+                self.next_block = cur_block_id;
                 self.cur_block.id = cur_block_id;
             }
             hir::Stat::Local { names, exps } => {
