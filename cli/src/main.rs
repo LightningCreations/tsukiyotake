@@ -4,15 +4,22 @@ use std::path::PathBuf;
 
 use clap::Parser;
 use tsukiyotake::{
-    Logos, engine::{
+    Logos,
+    engine::{
         CaptureSpan, LuaEngine, LuaError, ManagedValue, UnpackedValue, Value, Vec as TsuVec,
         table::Table,
-    }, hir::HirConversionContext, lex::Token, mir::{FunctionDef, MirConverter}, parse::parse_block
+    },
+    hir::HirConversionContext,
+    lex::Token,
+    mir::{FunctionDef, MirConverter},
+    parse::parse_block,
 };
 
 #[derive(Parser)]
 #[command(version)]
 struct Args {
+    #[clap(long)]
+    debug: bool,
     file: Option<PathBuf>,
     args: Option<Vec<String>>,
 }
@@ -32,6 +39,10 @@ fn main() {
         let mut mir_conv = MirConverter::new_at_root();
         mir_conv.write_block(&hir);
         let mir = mir_conv.finish();
+
+        if args.debug {
+            println!("{mir:#?}");
+        }
 
         LuaEngine::with_userdata(65536, &mir, run_file, populate_env);
     } else {

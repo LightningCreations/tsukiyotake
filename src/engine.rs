@@ -903,7 +903,8 @@ impl<'ctx> LuaEngine<'ctx> {
                         crate::mir::Terminator::Branch(expr, jump_target, jump_target1) => todo!(),
                         crate::mir::Terminator::Jump(jump_target) => {
                             last.current_instruction.set(0);
-                            last.current_block.set(jump_target.targ_bb as usize);
+                            last.current_block
+                                .set(jump_target.targ_bb.id().get() as usize);
 
                             for (a, b) in &jump_target.remaps {
                                 let val = last.vars[a.val() as usize].get().cloned().unwrap();

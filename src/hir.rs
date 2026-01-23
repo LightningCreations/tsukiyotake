@@ -6,7 +6,7 @@ use alloc::string::String;
 use alloc::{boxed::Box, vec::Vec};
 use alloc::{format, vec};
 use hashbrown::HashSet;
-use tsukiyotake_grammar::s;
+use tsukiyotake_grammar::{s, synth};
 
 use crate::ast;
 pub use crate::ast::{BinOp, FuncName, List, Spanned, UnOp};
@@ -183,7 +183,7 @@ impl HirConversionContext {
                 let exps = exps
                     .as_ref()
                     .map(|x| x.iter().map(|x| self.convert_exp(x.as_ref())).collect());
-                vec![Spanned(Stat::Assign { vars, exps }, ast.1)]
+                vec![s!(Stat::Assign { vars, exps }, ast.1)]
             }
             ast::Stat::FunctionCall(call) => {
                 let call = call.as_ref();
@@ -193,34 +193,28 @@ impl HirConversionContext {
                 if let Some(method) = &call.method {
                     // create local for object
                     let local = self.new_local();
-                    stats.push(Spanned::synth(Stat::Local {
-                        names: Spanned::synth(vec![Spanned::synth(AttName {
-                            name: Spanned::synth(local.clone()),
+                    stats.push(synth!(Stat::Local {
+                        names: synth!(vec![synth!(AttName {
+                            name: synth!(local.clone()),
                             attrib: None,
                         })]),
-                        exps: Some(Spanned::synth(vec![
-                            self.convert_prefix_exp((*call.lhs).as_ref()),
-                        ])),
+                        exps: Some(synth!(vec![self.convert_prefix_exp((*call.lhs).as_ref()),])),
                     }));
                     // add self parameter
                     args.insert(
                         0,
-                        Spanned::synth(Exp::Var(Spanned::synth(Var::Name(Spanned::synth(
-                            local.clone(),
-                        ))))),
+                        synth!(Exp::Var(synth!(Var::Name(synth!(local.clone(),))))),
                     );
                     // call the new function
-                    stats.push(Spanned(
-                        Stat::FunctionCall(Spanned(
+                    stats.push(s!(
+                        Stat::FunctionCall(s!(
                             FunctionCall {
-                                lhs: Box::new(Spanned::synth(Exp::Var(Spanned::synth(
-                                    Var::Path {
-                                        lhs: Box::new(Spanned::synth(Exp::Var(Spanned::synth(
-                                            Var::Name(Spanned::synth(local)),
-                                        )))),
-                                        field: method.clone(),
-                                    },
-                                )))),
+                                lhs: Box::new(synth!(Exp::Var(synth!(Var::Path {
+                                    lhs: Box::new(synth!(Exp::Var(synth!(Var::Name(synth!(
+                                        local
+                                    )),)))),
+                                    field: method.clone(),
+                                },)))),
                                 args,
                             },
                             call.1,
@@ -228,8 +222,8 @@ impl HirConversionContext {
                         ast.1,
                     ));
                 } else {
-                    stats.push(Spanned(
-                        Stat::FunctionCall(Spanned(
+                    stats.push(s!(
+                        Stat::FunctionCall(s!(
                             FunctionCall {
                                 lhs: Box::new(self.convert_prefix_exp((*call.lhs).as_ref())),
                                 args,
@@ -303,9 +297,7 @@ impl HirConversionContext {
                     Var::Name(x.clone())
                 } else {
                     Var::Path {
-                        lhs: Box::new(Spanned::synth(Exp::Var(Spanned::synth(Var::Name(
-                            Spanned::synth("_ENV".into()),
-                        ))))),
+                        lhs: Box::new(synth!(Exp::Var(synth!(Var::Name(synth!("_ENV".into()),))))),
                         field: x.clone(),
                     }
                 }

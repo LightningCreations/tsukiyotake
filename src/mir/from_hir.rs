@@ -2,6 +2,7 @@ use alloc::format;
 use alloc::vec;
 use hashbrown::HashMap;
 use tsukiyotake_grammar::s;
+use tsukiyotake_grammar::synth;
 
 use crate::{bb, hir, mir::*};
 
@@ -9,7 +10,6 @@ use crate::{bb, hir, mir::*};
 struct UnbuiltBasicBlock {
     id: BasicBlockId,
     stats: Vec<Spanned<Statement>>,
-    term: Option<Spanned<Terminator>>,
 }
 
 impl UnbuiltBasicBlock {
@@ -17,16 +17,14 @@ impl UnbuiltBasicBlock {
         Self {
             id: BasicBlockId::new_unchecked(NonZeroU32::new(1).unwrap()),
             stats: Vec::new(),
-            term: None,
         }
     }
 
-    fn finish_and_reset(&mut self) -> BasicBlock {
+    fn finish_and_reset(&mut self, terminator: Option<Spanned<Terminator>>) -> BasicBlock {
         BasicBlock {
             id: self.id,
             stats: core::mem::take(&mut self.stats),
-            term: core::mem::take(&mut self.term)
-                .unwrap_or(Spanned(Terminator::Return(Multival::Empty), 0..0)), // TODO: Make this a real span
+            term: terminator.unwrap_or(synth!(Terminator::Return(Multival::Empty))), // TODO: Make this a real span
         }
     }
 
@@ -74,12 +72,12 @@ impl MirConverter {
             todo!("upvars are interesting")
         }
 
-        result.add_var(Spanned::synth("_ENV".into()));
+        result.add_var(synth!("_ENV".into()));
         for param in params {
             result.add_var(param.clone());
         }
         if variadic {
-            result.add_var(Spanned::synth("...".into()));
+            result.add_var(synth!("...".into()));
         }
 
         result
@@ -95,7 +93,7 @@ impl MirConverter {
 
     pub fn new_at_root() -> Self {
         // Handles the root chunk, as it has very particular settings
-        Self::new(Spanned::synth("<root>".into()), &[], &[], true)
+        Self::new(synth!("<root>".into()), &[], &[], true)
     }
 
     fn get_var(&mut self, name: &str) -> SsaVarId {
@@ -108,8 +106,9 @@ impl MirConverter {
 
     fn convert_exp(&mut self, exp: Spanned<&hir::Exp>) -> Expr {
         match exp.0 {
-            hir::Exp::True => Expr::Boolean(true),
+            hir::Exp::Nil => Expr::Nil,
             hir::Exp::False => Expr::Boolean(false),
+            hir::Exp::True => Expr::Boolean(true),
             hir::Exp::NumeralInt(x) => Expr::Integer(x.0),
             hir::Exp::NumeralFloat(x) => Expr::Float(x.to_bits()),
             hir::Exp::LiteralString(x) => Expr::String(x.0.clone().to_vec()),
@@ -151,7 +150,7 @@ impl MirConverter {
                     .collect(),
                 array_part: Box::new(self.convert_list(array_part)),
             }),
-            hir::Exp::BinExp { lhs, op, rhs } => Expr::BinaryOp(Spanned(
+            hir::Exp::BinExp { lhs, op, rhs } => Expr::BinaryOp(s!(
                 BinaryExpr {
                     op: *op,
                     left: Box::new(self.convert_exp((**lhs).as_ref())),
@@ -219,21 +218,17 @@ impl MirConverter {
                         if let hir::Var::Name(x) = &**x {
                             self.add_var(x.as_ref().map(|x| x.clone().into_owned()))
                         } else {
-                            self.add_var(Spanned::synth(format!(
-                                "<temporary assignment index {i}>"
-                            )))
+                            self.add_var(synth!(format!("<temporary assignment index {i}>")))
                         }
                     })
                     .collect();
                 // Then, generate the actual assignment statement
-                self.cur_block.push(Spanned(
-                    Statement::Multideclare(vars.clone(), result),
-                    stat.1,
-                ));
+                self.cur_block
+                    .push(s!(Statement::Multideclare(vars.clone(), result), stat.1,));
                 // Finally, write any temporary variables to their correct targets
                 for (i, target) in targets.into_iter().enumerate() {
                     if let Some((table, index, span)) = target {
-                        self.cur_block.push(Spanned(
+                        self.cur_block.push(s!(
                             Statement::WriteIndex {
                                 table,
                                 index,
@@ -248,28 +243,125 @@ impl MirConverter {
                 let lhs = self.convert_exp((*x.lhs).as_ref());
                 let params = self.convert_list(&x.args);
 
-                self.cur_block.push(Spanned(
+                self.cur_block.push(s!(
                     Statement::Call(None, FunctionCall { base: lhs, params }),
                     x.1.clone(),
                 ));
             }
-            hir::Stat::If { cond_blocks, else_block } => {
-                
+            hir::Stat::If {
+                cond_blocks,
+                else_block,
+            } => {
+                // Alright. This is *not* the structure we want, so we're gonna fix it.
+                // What we will generate is a set of block terminators, then the corresponding blocks.
+                // Each block terminator will be an if-else in effect.
+                // As an example, this Lua code:
+                //
+                //     if a then
+                //         block1
+                //     elseif b then
+                //         block2
+                //     else
+                //         block3
+                //     end
+                //
+                // turns into this code, roughly:
+                //
+                //     @1: {
+                //         branch a @2 else @3
+                //     }
+                //     @2: {
+                //         block1
+                //         jump @6
+                //     }
+                //     @3: {
+                //         branch b @4 else @5
+                //     }
+                //     @4: {
+                //         block2
+                //         jump @6
+                //     }
+                //     @5: {
+                //         block3
+                //         jump @6
+                //     }
+                //
+                // and then code continues at @6.
+                // This more-or-less mimics an if-else tree rather than an if-elseif-else fan,
+                // and while we could rewrite into that form, I don't want to do that much work, so I won't.
+                // Instead, we'll do this in stages.
+
+                // First, we'll generate the block terminators for the "scaffolding" of the fan, i.e. everything but the code inside the if-else blocks.
+                let mut cur_block_id = self.next_block;
+                let mut terminators = Vec::new();
+                let mut code_block_ids = Vec::new();
+                for (exp, _) in cond_blocks {
+                    let code_block_id = cur_block_id.next();
+                    let next_block_id = code_block_id.next();
+                    terminators.push((
+                        cur_block_id,
+                        s!(
+                            Terminator::Branch(
+                                self.convert_exp(exp.as_ref()),
+                                JumpTarget {
+                                    targ_bb: code_block_id,
+                                    remaps: Vec::new(),
+                                },
+                                JumpTarget {
+                                    targ_bb: next_block_id,
+                                    remaps: Vec::new(),
+                                },
+                            ),
+                            exp.1.clone()
+                        ),
+                    ));
+                    code_block_ids.push(code_block_id);
+                    cur_block_id = next_block_id;
+                }
+                let mut code_blocks = cond_blocks.iter().map(|(_, x)| &**x).collect::<Vec<_>>();
+                if let Some(else_block) = else_block {
+                    code_block_ids.push(cur_block_id);
+                    cur_block_id = cur_block_id.next();
+                    code_blocks.push(else_block);
+                }
+                let final_terminator = synth!(Terminator::Jump(JumpTarget {
+                    targ_bb: cur_block_id,
+                    remaps: Vec::new()
+                }));
+                for (id, term) in terminators {
+                    self.cur_block.id = id;
+                    self.basic_blocks
+                        .push(self.cur_block.finish_and_reset(Some(term)));
+                }
+                for (id, block) in code_block_ids.into_iter().zip(code_blocks) {
+                    self.write_block_inner(id, block, Some(final_terminator.clone()));
+                }
+                self.cur_block.id = cur_block_id;
             }
             x => todo!("{x:?}"),
         }
     }
 
-    fn write_block_inner(&mut self, block_id: BasicBlockId, block: &hir::Block) {
+    fn write_block_inner(
+        &mut self,
+        block_id: BasicBlockId,
+        block: &hir::Block,
+        terminator: Option<Spanned<Terminator>>,
+    ) {
         self.cur_block.id = block_id;
         for stat in &block.stats {
             self.write_stat(stat.as_ref());
         }
-        self.basic_blocks.push(self.cur_block.finish_and_reset());
+        if block.retstat.is_none() {
+            self.basic_blocks
+                .push(self.cur_block.finish_and_reset(terminator));
+        } else {
+            todo!()
+        }
     }
 
     pub fn write_block(&mut self, block: &hir::Block) {
-        self.write_block_inner(self.next_block, block);
+        self.write_block_inner(self.next_block, block, None);
     }
 
     pub fn finish(mut self) -> FunctionDef {
@@ -366,7 +458,7 @@ mod test {
                         ),
                         0..20
                     )],
-                    term: s!(Terminator::Return(Multival::Empty), 0..0),
+                    term: synth!(Terminator::Return(Multival::Empty)),
                 }],
             }
         )

@@ -10,7 +10,7 @@ print(not true)
 print(true or (true and false))
 
 if nil then
-    print('nil is not true')
+    print('nil is true')
 else
     print('nil is false')
 end

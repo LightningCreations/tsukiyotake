@@ -1,5 +1,5 @@
 use alloc::collections::BTreeMap;
-use core::{fmt, num::NonZeroU32};
+use core::{bstr::ByteStr, fmt, num::NonZeroU32};
 
 use crate::ast::Spanned;
 use alloc::{boxed::Box, string::String, vec::Vec};
@@ -20,6 +20,10 @@ impl BasicBlockId {
 
     pub const fn next(self) -> Self {
         Self(self.0.checked_add(1).unwrap())
+    }
+
+    pub const fn id(self) -> NonZeroU32 {
+        self.0
     }
 
     pub const UNUSED: BasicBlockId = Self(nz!(0xFFFF_FFFF));
@@ -95,7 +99,7 @@ pub enum Terminator {
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub struct JumpTarget {
-    pub targ_bb: u32,
+    pub targ_bb: BasicBlockId,
     pub remaps: Vec<(SsaVarId, SsaVarId)>,
 }
 
@@ -186,7 +190,7 @@ impl Multival {
     }
 }
 
-#[derive(Clone, Debug, Hash, PartialEq, Eq)]
+#[derive(Clone, Hash, PartialEq, Eq)]
 pub enum Expr {
     Nil,
     Var(SsaVarId),
@@ -201,6 +205,30 @@ pub enum Expr {
     Index(Spanned<IndexExpr>),
     UnaryOp(Spanned<UnaryExpr>),
     BinaryOp(Spanned<BinaryExpr>),
+}
+
+impl fmt::Debug for Expr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // slighttweak
+        match self {
+            Self::Nil => write!(f, "Nil"),
+            Self::Var(arg0) => f.debug_tuple("Var").field(arg0).finish(),
+            Self::ReadUpvar(arg0) => f.debug_tuple("ReadUpvar").field(arg0).finish(),
+            Self::Extract(arg0, arg1) => f.debug_tuple("Extract").field(arg0).field(arg1).finish(),
+            Self::Table(arg0) => f.debug_tuple("Table").field(arg0).finish(),
+            Self::String(arg0) => f.debug_tuple("String").field(&ByteStr::new(arg0)).finish(),
+            Self::Closure(arg0) => f.debug_tuple("Closure").field(arg0).finish(),
+            Self::Boolean(arg0) => f.debug_tuple("Boolean").field(arg0).finish(),
+            Self::Integer(arg0) => f.debug_tuple("Integer").field(arg0).finish(),
+            Self::Float(arg0) => f
+                .debug_tuple("Float")
+                .field(&f64::from_bits(*arg0))
+                .finish(),
+            Self::Index(arg0) => f.debug_tuple("Index").field(arg0).finish(),
+            Self::UnaryOp(arg0) => f.debug_tuple("UnaryOp").field(arg0).finish(),
+            Self::BinaryOp(arg0) => f.debug_tuple("BinaryOp").field(arg0).finish(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]

@@ -63,7 +63,7 @@ impl<T> Spanned<T> {
     }
 
     pub fn synth(inner: T) -> Self {
-        Self(inner, 0..0)
+        Self(inner, SYNTHETIC_SPAN)
     }
 }
 
