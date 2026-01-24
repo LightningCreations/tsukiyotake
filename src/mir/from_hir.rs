@@ -171,13 +171,47 @@ impl<'src> MirConverter<'src> {
             hir::Exp::CollapseMultival(x) => {
                 Expr::Extract(Box::new(self.convert_exp_multival((**x).as_ref())), 0)
             }
+            hir::Exp::FunctionDef(x) => {
+                let mut new_conv = MirConverter::new(
+                    synth!("<TODO: DETERMINE CANONICAL NAME>".into()),
+                    &x.block
+                        .import_locals
+                        .iter()
+                        .cloned()
+                        .map(|x| synth!(x))
+                        .collect::<Vec<_>>(),
+                    &x.params,
+                    x.varargs.is_some(),
+                );
+                new_conv.write_block(&x.block);
+                let function = new_conv.finish();
+                Expr::Closure(ClosureDef {
+                    captures: x
+                        .block
+                        .import_locals
+                        .iter()
+                        .map(|x| self.get_var(&x))
+                        .collect(),
+                    function,
+                })
+            }
+            hir::Exp::FunctionCallResult(x) => Expr::Extract(
+                Box::new(Multival::Var {
+                    var: self.get_var(&x),
+                    count: None,
+                }),
+                0,
+            ),
             x => todo!("{x:?}"),
         }
     }
 
     fn convert_exp_multival(&mut self, exp: Spanned<&'src hir::Exp<'src>>) -> Multival {
         match exp.0 {
-            hir::Exp::FunctionCall(_) => todo!(),
+            hir::Exp::FunctionCallResult(x) => Multival::Var {
+                var: self.get_var(&x),
+                count: None,
+            },
             _ => Multival::FixedList(vec![self.convert_exp(exp)]),
         }
     }
@@ -242,13 +276,14 @@ impl<'src> MirConverter<'src> {
                     }
                 }
             }
-            hir::Stat::FunctionCall(x) => {
-                let lhs = self.convert_exp((*x.lhs).as_ref());
-                let params = self.convert_list(&x.args);
+            hir::Stat::FunctionCall { call, target } => {
+                let lhs = self.convert_exp((*call.lhs).as_ref());
+                let params = self.convert_list(&call.args);
+                let target = target.as_ref().map(|x| self.add_var(synth!(x.clone())));
 
                 self.cur_block.push(s!(
-                    Statement::Call(None, FunctionCall { base: lhs, params }),
-                    x.1.clone(),
+                    Statement::Call(target, FunctionCall { base: lhs, params }),
+                    call.1.clone(),
                 ));
             }
             hir::Stat::If {
@@ -416,30 +451,36 @@ mod test {
             locals: HashSet::new(),
             import_locals: HashSet::new(),
             stats: vec![s!(
-                hir::Stat::FunctionCall(s!(
-                    hir::FunctionCall {
-                        lhs: Box::new(s!(
-                            hir::Exp::Var(s!(
-                                hir::Var::Path {
-                                    lhs: Box::new(synth!(hir::Exp::Var(synth!(hir::Var::Name(
-                                        synth!("_ENV".into())
-                                    ))))),
-                                    field: s!("print".into(), 0..5)
-                                },
+                hir::Stat::FunctionCall {
+                    call: s!(
+                        hir::FunctionCall {
+                            lhs: Box::new(s!(
+                                hir::Exp::Var(s!(
+                                    hir::Var::Path {
+                                        lhs: Box::new(synth!(hir::Exp::Var(synth!(
+                                            hir::Var::Name(synth!("_ENV".into()))
+                                        )))),
+                                        field: s!("print".into(), 0..5)
+                                    },
+                                    0..5,
+                                )),
                                 0..5,
                             )),
-                            0..5,
-                        )),
-                        args: s!(
-                            vec![s!(
-                                hir::Exp::LiteralString(s!(Box::new(*br#"Hello World"#), 6..19)),
+                            args: s!(
+                                vec![s!(
+                                    hir::Exp::LiteralString(s!(
+                                        Box::new(*br#"Hello World"#),
+                                        6..19
+                                    )),
+                                    6..19,
+                                )],
                                 6..19,
-                            )],
-                            6..19,
-                        )
-                    },
-                    0..20,
-                )),
+                            )
+                        },
+                        0..20,
+                    ),
+                    target: None
+                },
                 0..20,
             )],
             retstat: None,

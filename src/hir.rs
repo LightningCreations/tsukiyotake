@@ -25,7 +25,10 @@ pub enum Stat<'src> {
         vars: List<Var<'src>>,
         exps: List<Exp<'src>>,
     },
-    FunctionCall(Spanned<FunctionCall<'src>>),
+    FunctionCall {
+        call: Spanned<FunctionCall<'src>>,
+        target: Option<Cow<'src, str>>,
+    },
     Label(Spanned<&'src str>),
     Break,
     Goto(Spanned<&'src str>),
@@ -104,8 +107,8 @@ pub enum Exp<'src> {
         rhs: Box<Spanned<Exp<'src>>>,
     },
     Var(Spanned<Var<'src>>),
-    FunctionCall(Spanned<FunctionCall<'src>>),
     CollapseMultival(Box<Spanned<Exp<'src>>>),
+    FunctionCallResult(Cow<'src, str>),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -116,7 +119,7 @@ pub struct FunctionCall<'src> {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct FuncBody<'src> {
-    pub params: List<&'src str>,
+    pub params: List<Cow<'src, str>>,
     pub varargs: Option<Spanned<()>>,
     pub block: Spanned<Block<'src>>,
 }
@@ -135,6 +138,14 @@ pub struct HirConversionContext<'src> {
     synthetic_counter: Rc<AtomicUsize>,
 }
 
+fn unbox<'src, T>(
+    (result, mut new_stats): (T, Vec<Spanned<Stat<'src>>>),
+    stats: &mut Vec<Spanned<Stat<'src>>>,
+) -> T {
+    stats.append(&mut new_stats);
+    result
+}
+
 impl<'src> HirConversionContext<'src> {
     pub fn new() -> Self {
         Self {
@@ -146,14 +157,17 @@ impl<'src> HirConversionContext<'src> {
     }
 
     pub fn convert_block(mut self, ast: &'src ast::Block<'src>) -> Block<'src> {
-        let stats = ast
+        let mut stats = ast
             .stats
             .iter()
             .flat_map(|x| self.convert_stat(x.as_ref()))
             .collect();
         let retstat = ast.retstat.as_ref().map(|x| {
-            x.as_ref()
-                .map(|x| x.iter().map(|x| self.convert_exp(x.as_ref())).collect())
+            x.as_ref().map(|x| {
+                x.iter()
+                    .map(|x| unbox(self.convert_exp(x.as_ref()), &mut stats))
+                    .collect()
+            })
         });
         Block {
             locals: self.locals,
@@ -163,68 +177,99 @@ impl<'src> HirConversionContext<'src> {
         }
     }
 
+    pub fn convert_func_body(
+        &mut self,
+        ast: Spanned<&'src ast::FuncBody<'src>>,
+    ) -> Spanned<FuncBody<'src>> {
+        let span = ast.1.clone();
+        let params = ast.0.params.clone();
+        let ctx = self.descend();
+        let block = ast.0.block.as_ref().map(|x| ctx.convert_block(x));
+        self.import_locals.extend(block.import_locals.clone());
+
+        s!(
+            FuncBody {
+                params,
+                varargs: ast.0.varargs.clone(),
+                block
+            },
+            span
+        )
+    }
+
+    fn fn_helper(
+        &mut self,
+        call: Spanned<&'src ast::FunctionCall<'src>>,
+    ) -> (Spanned<FunctionCall<'src>>, Vec<Spanned<Stat<'src>>>) {
+        // Needs to be handled specially; just about every possible function call scenario is different.
+        let mut stats = vec![];
+        let mut args = unbox(self.convert_args(call.args.as_ref()), &mut stats);
+        let func_call = if let Some(method) = &call.method {
+            // create local for object
+            let local = self.new_local();
+            let exps = Some(synth!(vec![unbox(
+                self.convert_prefix_exp((*call.lhs).as_ref()),
+                &mut stats
+            )]));
+            stats.push(synth!(Stat::Local {
+                names: synth!(vec![synth!(local.clone())]),
+                exps,
+            }));
+            // add self parameter
+            args.insert(
+                0,
+                synth!(Exp::Var(synth!(Var::Name(synth!(local.clone(),))))),
+            );
+            // call the new function
+            s!(
+                FunctionCall {
+                    lhs: Box::new(synth!(Exp::Var(synth!(Var::Path {
+                        lhs: Box::new(synth!(Exp::Var(synth!(Var::Name(synth!(local)),)))),
+                        field: method.clone(),
+                    },)))),
+                    args,
+                },
+                call.1
+            )
+        } else {
+            s!(
+                FunctionCall {
+                    lhs: Box::new(unbox(
+                        self.convert_prefix_exp((*call.lhs).as_ref()),
+                        &mut stats
+                    )),
+                    args,
+                },
+                call.1
+            )
+        };
+        (func_call, stats)
+    }
+
     // ast::Stat::Empty is converted into None
     pub fn convert_stat(
         &mut self,
         ast: Spanned<&'src ast::Stat<'src>>,
     ) -> Vec<Spanned<Stat<'src>>> {
+        let mut stats = vec![];
         match &*ast {
-            ast::Stat::Empty => vec![],
+            ast::Stat::Empty => {}
             ast::Stat::Assign { vars, exps } => {
-                let vars = vars
-                    .as_ref()
-                    .map(|x| x.iter().map(|x| self.convert_var(x.as_ref())).collect());
-                let exps = exps
-                    .as_ref()
-                    .map(|x| x.iter().map(|x| self.convert_exp(x.as_ref())).collect());
-                vec![s!(Stat::Assign { vars, exps }, ast.1)]
+                let vars = vars.as_ref().map(|x| {
+                    x.iter()
+                        .map(|x| unbox(self.convert_var(x.as_ref()), &mut stats))
+                        .collect()
+                });
+                let exps = exps.as_ref().map(|x| {
+                    x.iter()
+                        .map(|x| unbox(self.convert_exp(x.as_ref()), &mut stats))
+                        .collect()
+                });
+                stats.push(s!(Stat::Assign { vars, exps }, ast.1));
             }
             ast::Stat::FunctionCall(call) => {
-                let call = call.as_ref();
-                // Needs to be handled specially; just about every possible function call scenario is different.
-                let mut stats = vec![];
-                let mut args = self.convert_args(call.args.as_ref());
-                if let Some(method) = &call.method {
-                    // create local for object
-                    let local = self.new_local();
-                    stats.push(synth!(Stat::Local {
-                        names: synth!(vec![synth!(local.clone())]),
-                        exps: Some(synth!(vec![self.convert_prefix_exp((*call.lhs).as_ref()),])),
-                    }));
-                    // add self parameter
-                    args.insert(
-                        0,
-                        synth!(Exp::Var(synth!(Var::Name(synth!(local.clone(),))))),
-                    );
-                    // call the new function
-                    stats.push(s!(
-                        Stat::FunctionCall(s!(
-                            FunctionCall {
-                                lhs: Box::new(synth!(Exp::Var(synth!(Var::Path {
-                                    lhs: Box::new(synth!(Exp::Var(synth!(Var::Name(synth!(
-                                        local
-                                    )),)))),
-                                    field: method.clone(),
-                                },)))),
-                                args,
-                            },
-                            call.1,
-                        )),
-                        ast.1,
-                    ));
-                } else {
-                    stats.push(s!(
-                        Stat::FunctionCall(s!(
-                            FunctionCall {
-                                lhs: Box::new(self.convert_prefix_exp((*call.lhs).as_ref())),
-                                args,
-                            },
-                            call.1,
-                        )),
-                        ast.1,
-                    ));
-                }
-                stats
+                let call = unbox(self.fn_helper(call.as_ref()), &mut stats);
+                stats.push(s!(Stat::FunctionCall { call, target: None }, ast.1));
             }
             ast::Stat::Label(spanned) => todo!(),
             ast::Stat::Break => todo!(),
@@ -242,9 +287,10 @@ impl<'src> HirConversionContext<'src> {
                 let cond_blocks = conds
                     .into_iter()
                     .map(|(cond, block)| {
-                        let cond = self.convert_exp(cond.as_ref());
+                        let cond = unbox(self.convert_exp(cond.as_ref()), &mut stats);
                         let ctx = self.descend();
                         let block = Box::new((**block).as_ref().map(|x| ctx.convert_block(x)));
+                        self.import_locals.extend(block.import_locals.clone());
                         (cond, block)
                     })
                     .collect();
@@ -252,17 +298,19 @@ impl<'src> HirConversionContext<'src> {
                 let else_block = else_block.as_ref().map(|x| {
                     Box::new((**x).as_ref().map(|block| {
                         let ctx = self.descend();
-                        ctx.convert_block(block)
+                        let block = ctx.convert_block(block);
+                        self.import_locals.extend(block.import_locals.clone());
+                        block
                     }))
                 });
 
-                vec![s!(
+                stats.push(s!(
                     Stat::If {
                         cond_blocks,
                         else_block,
                     },
                     ast.1
-                )]
+                ));
             }
             ast::Stat::ForNumerical {
                 var,
@@ -273,9 +321,25 @@ impl<'src> HirConversionContext<'src> {
             } => todo!(),
             ast::Stat::ForGeneric { names, exps, block } => todo!(),
             ast::Stat::Function { name, body } => todo!(),
-            ast::Stat::LocalFunction { name, body } => todo!(),
+            ast::Stat::LocalFunction { name, body } => {
+                let function = self.convert_func_body(body.as_ref());
+                stats.push(s!(
+                    Stat::Local {
+                        names: synth!(vec![name.clone()]),
+                        exps: Some(synth!(vec![s!(Exp::FunctionDef(function), ast.1.clone())])),
+                    },
+                    ast.1
+                ));
+            }
             ast::Stat::Local { names, exps } => {
-                vec![s!(
+                let exps = exps.as_ref().map(|x| {
+                    x.as_ref().map(|x| {
+                        x.iter()
+                            .map(|x| unbox(self.convert_exp(x.as_ref()), &mut stats))
+                            .collect()
+                    })
+                });
+                stats.push(s!(
                     Stat::Local {
                         names: names.as_ref().map(|x| x
                             .iter()
@@ -284,21 +348,24 @@ impl<'src> HirConversionContext<'src> {
                                 x.name.0
                             }))
                             .collect()),
-                        exps: exps.as_ref().map(|x| x
-                            .as_ref()
-                            .map(|x| x.iter().map(|x| self.convert_exp(x.as_ref())).collect())),
+                        exps,
                     },
                     ast.1
-                )]
+                ));
             }
             ast::Stat::Error => {
                 unimplemented!("errors should be handled before attempting HIR translation")
             }
         }
+        stats
     }
 
-    pub fn convert_var(&mut self, ast: Spanned<&'src ast::Var<'src>>) -> Spanned<Var<'src>> {
-        ast.map(|x| match x {
+    pub fn convert_var(
+        &mut self,
+        ast: Spanned<&'src ast::Var<'src>>,
+    ) -> (Spanned<Var<'src>>, Vec<Spanned<Stat<'src>>>) {
+        let mut stats = vec![];
+        let var = ast.map(|x| match x {
             ast::Var::Name(x) => {
                 if self.in_scope(x) {
                     Var::Name(x.clone())
@@ -310,18 +377,23 @@ impl<'src> HirConversionContext<'src> {
                 }
             }
             ast::Var::Index { lhs, idx } => Var::Index {
-                lhs: Box::new(self.convert_prefix_exp((**lhs).as_ref())),
-                idx: Box::new(self.convert_exp((**idx).as_ref())),
+                lhs: Box::new(unbox(self.convert_prefix_exp((**lhs).as_ref()), &mut stats)),
+                idx: Box::new(unbox(self.convert_exp((**idx).as_ref()), &mut stats)),
             },
             ast::Var::Path { lhs, member } => Var::Path {
-                lhs: Box::new(self.convert_prefix_exp((**lhs).as_ref())),
+                lhs: Box::new(unbox(self.convert_prefix_exp((**lhs).as_ref()), &mut stats)),
                 field: member.clone(),
             },
-        })
+        });
+        (var, stats)
     }
 
-    pub fn convert_exp(&mut self, ast: Spanned<&'src ast::Exp<'src>>) -> Spanned<Exp<'src>> {
-        ast.map(|x| match x {
+    pub fn convert_exp(
+        &mut self,
+        ast: Spanned<&'src ast::Exp<'src>>,
+    ) -> (Spanned<Exp<'src>>, Vec<Spanned<Stat<'src>>>) {
+        let mut stats = vec![];
+        let exp = ast.map(|x| match x {
             ast::Exp::Nil => Exp::Nil,
             ast::Exp::False => Exp::False,
             ast::Exp::True => Exp::True,
@@ -329,8 +401,8 @@ impl<'src> HirConversionContext<'src> {
             ast::Exp::NumeralFloat(x) => Exp::NumeralFloat(x.clone()),
             ast::Exp::LiteralString(x) => Exp::LiteralString(x.clone()),
             ast::Exp::VarArg => Exp::VarArg,
-            ast::Exp::FunctionDef(spanned) => todo!(),
-            ast::Exp::PrefixExp(x) => self.convert_prefix_exp(x.as_ref()).0,
+            ast::Exp::FunctionDef(x) => Exp::FunctionDef(self.convert_func_body(x.as_ref())),
+            ast::Exp::PrefixExp(x) => unbox(self.convert_prefix_exp(x.as_ref()), &mut stats).0,
             ast::Exp::TableConstructor(x) => {
                 let mut hash_part = Vec::new();
                 let mut array_part = Vec::new();
@@ -338,18 +410,18 @@ impl<'src> HirConversionContext<'src> {
                     match &**field {
                         ast::Field::Exp { field, val } => {
                             hash_part.push((
-                                Index::Exp(self.convert_exp((**field).as_ref())),
-                                self.convert_exp((**val).as_ref()),
+                                Index::Exp(unbox(self.convert_exp((**field).as_ref()), &mut stats)),
+                                unbox(self.convert_exp((**val).as_ref()), &mut stats),
                             ));
                         }
                         ast::Field::Named { field, val } => {
                             hash_part.push((
                                 Index::Name(field.0.clone()),
-                                self.convert_exp((**val).as_ref()),
+                                unbox(self.convert_exp((**val).as_ref()), &mut stats),
                             ));
                         }
                         ast::Field::Unnamed { val } => {
-                            array_part.push(self.convert_exp((**val).as_ref()));
+                            array_part.push(unbox(self.convert_exp((**val).as_ref()), &mut stats));
                         }
                     }
                 }
@@ -359,47 +431,69 @@ impl<'src> HirConversionContext<'src> {
                 }
             }
             ast::Exp::BinExp { lhs, op, rhs } => Exp::BinExp {
-                lhs: Box::new(self.convert_exp((**lhs).as_ref())),
+                lhs: Box::new(unbox(self.convert_exp((**lhs).as_ref()), &mut stats)),
                 op: *op,
-                rhs: Box::new(self.convert_exp((**rhs).as_ref())),
+                rhs: Box::new(unbox(self.convert_exp((**rhs).as_ref()), &mut stats)),
             },
             ast::Exp::UnExp { op, rhs } => Exp::UnExp {
                 op: *op,
-                rhs: Box::new(self.convert_exp((**rhs).as_ref())),
+                rhs: Box::new(unbox(self.convert_exp((**rhs).as_ref()), &mut stats)),
             },
             ast::Exp::Error => {
                 unimplemented!("errors should be handled before attempting HIR translation")
             }
-        })
+        });
+        (exp, stats)
     }
 
     pub fn convert_prefix_exp(
         &mut self,
         ast: Spanned<&'src ast::PrefixExp<'src>>,
-    ) -> Spanned<Exp<'src>> {
-        ast.map(|x| match x {
-            ast::PrefixExp::Var(x) => Exp::Var(self.convert_var(x.as_ref())),
-            ast::PrefixExp::FunctionCall(spanned) => todo!(),
-            ast::PrefixExp::Parens(x) => {
-                Exp::CollapseMultival(Box::new(self.convert_exp((**x).as_ref())))
+    ) -> (Spanned<Exp<'src>>, Vec<Spanned<Stat<'src>>>) {
+        let mut stats = vec![];
+        let exp = ast.map(|x| match x {
+            ast::PrefixExp::Var(x) => Exp::Var(unbox(self.convert_var(x.as_ref()), &mut stats)),
+            ast::PrefixExp::FunctionCall(x) => {
+                let target = self.new_local();
+                let call = s!(
+                    Stat::FunctionCall {
+                        call: unbox(self.fn_helper(x.as_ref()), &mut stats),
+                        target: Some(target.clone()),
+                    },
+                    x.1.clone()
+                );
+                stats.push(call);
+                Exp::FunctionCallResult(target)
             }
+            ast::PrefixExp::Parens(x) => Exp::CollapseMultival(Box::new(unbox(
+                self.convert_exp((**x).as_ref()),
+                &mut stats,
+            ))),
             ast::PrefixExp::Error => {
                 unimplemented!("errors should be handled before attempting HIR translation")
             }
-        })
+        });
+        (exp, stats)
     }
 
-    pub fn convert_args(&mut self, ast: Spanned<&'src ast::Args<'src>>) -> List<Exp<'src>> {
-        match &*ast {
-            ast::Args::List(list) => list
-                .as_ref()
-                .map(|x| x.iter().map(|x| self.convert_exp(x.as_ref())).collect()),
+    pub fn convert_args(
+        &mut self,
+        ast: Spanned<&'src ast::Args<'src>>,
+    ) -> (List<Exp<'src>>, Vec<Spanned<Stat<'src>>>) {
+        let mut stats = vec![];
+        let args = match &*ast {
+            ast::Args::List(list) => list.as_ref().map(|x| {
+                x.iter()
+                    .map(|x| unbox(self.convert_exp(x.as_ref()), &mut stats))
+                    .collect()
+            }),
             ast::Args::TableConstructor(x) => todo!(),
             ast::Args::String(x) => todo!(),
             ast::Args::Error => {
                 unimplemented!("errors should be handled before attempting HIR translation")
             }
-        }
+        };
+        (args, stats)
     }
 
     // why does this take &mut self? because it will take steps to place things in scope if they're in the parent scope :)
@@ -484,30 +578,33 @@ mod test {
                 locals: HashSet::new(),
                 import_locals: HashSet::new(),
                 stats: vec![s!(
-                    Stat::FunctionCall(s!(
-                        FunctionCall {
-                            lhs: Box::new(s!(
-                                Exp::Var(s!(
-                                    Var::Path {
-                                        lhs: Box::new(synth!(Exp::Var(synth!(Var::Name(synth!(
-                                            "_ENV".into()
-                                        )))))),
-                                        field: s!("print".into(), 0..5)
-                                    },
+                    Stat::FunctionCall {
+                        call: s!(
+                            FunctionCall {
+                                lhs: Box::new(s!(
+                                    Exp::Var(s!(
+                                        Var::Path {
+                                            lhs: Box::new(synth!(Exp::Var(synth!(Var::Name(
+                                                synth!("_ENV".into())
+                                            ))))),
+                                            field: s!("print".into(), 0..5)
+                                        },
+                                        0..5,
+                                    )),
                                     0..5,
                                 )),
-                                0..5,
-                            )),
-                            args: s!(
-                                vec![s!(
-                                    Exp::LiteralString(s!(Box::new(*br#"Hello World"#), 6..19)),
+                                args: s!(
+                                    vec![s!(
+                                        Exp::LiteralString(s!(Box::new(*br#"Hello World"#), 6..19)),
+                                        6..19,
+                                    )],
                                     6..19,
-                                )],
-                                6..19,
-                            )
-                        },
-                        0..20,
-                    )),
+                                )
+                            },
+                            0..20,
+                        ),
+                        target: None
+                    },
                     0..20,
                 )],
                 retstat: None
