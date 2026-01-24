@@ -1,6 +1,6 @@
 #![feature(allocator_api)]
 
-use std::path::PathBuf;
+use std::{path::PathBuf, process::exit};
 
 use clap::Parser;
 use tsukiyotake::{
@@ -56,6 +56,24 @@ fn populate_env<'ctx>(table: &mut Table<'ctx>, engine: &'ctx LuaEngine<'ctx>) {
         Value::string_literal(b"print"),
         engine.create_rust_function(print),
     );
+    let mut os = Table::new(engine);
+    os.insert(
+        engine,
+        Value::string_literal(b"exit"),
+        engine.create_rust_function(os_exit),
+    );
+    table.insert(
+        engine,
+        Value::string_literal(b"os"),
+        engine.allocate_managed_value(os),
+    );
+}
+
+fn os_exit<'ctx>(
+    _: &'ctx LuaEngine<'ctx>,
+    params: &[Value<'ctx>],
+) -> Result<TsuVec<'ctx, Value<'ctx>>, LuaError<'ctx>> {
+    exit(params.get(0).and_then(|x| x.as_int()).unwrap_or(0) as i32)
 }
 
 fn print<'ctx>(

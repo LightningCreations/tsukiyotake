@@ -9,8 +9,8 @@ use logos::Span;
 
 use crate::{
     ast::{
-        Args, AttName, BinOp, Block, Exp, Field, FuncBody, FunctionCall, PrefixExp, SYNTHETIC_POS,
-        SYNTHETIC_SPAN, Spanned, Stat, UnOp, Var,
+        Args, AttName, BinOp, Block, Exp, Field, FuncBody, FuncName, FunctionCall, PrefixExp,
+        SYNTHETIC_POS, SYNTHETIC_SPAN, Spanned, Stat, UnOp, Var,
     },
     lex::Token,
     s, synth,
@@ -20,7 +20,9 @@ use crate::{
 pub enum TokenClass {
     And,
     Assign,
+    Colon,
     Comma,
+    Dot,
     DotDot,
     Equals,
     Not,
@@ -97,6 +99,7 @@ fn unbox<'a, T, E>(
 
 fn update_span(result_span: &mut Option<Span>, span: &Span) {
     if let Some(result_span) = result_span.as_mut() {
+        result_span.start = result_span.start.min(span.start);
         if span.end != SYNTHETIC_POS {
             // Don't extend if the new end pos is synthetic
             result_span.end = result_span.end.max(span.end); // only ever extend the span
@@ -330,7 +333,95 @@ fn parse_ident<'a, E: Clone + fmt::Debug>(
 fn parse_table_field<'a, E: Clone + fmt::Debug>(
     input: &mut Peekable<impl Iterator<Item = (Result<Token<'a>, E>, Span)>>,
 ) -> ParseResult<'a, Field<'a>, E> {
-    todo!()
+    let mut result_span = None;
+    let mut errors = vec![];
+
+    let field = match input.peek() {
+        Some((Err(e), span)) => {
+            lex_error(e, span, &mut result_span, &mut errors);
+            None
+        }
+        x @ Some((Ok(Token::Ident(_)), _)) => {
+            // This is the one time I wish I had two-token lookahead. Instead I get to do something really stupid.
+            let backup = x.cloned(); // hold onto this in case we need to bail.
+            let maybe_exp = unbox(parse_exp(input), &mut result_span, &mut errors);
+            match input.peek() {
+                Some((Err(e), span)) => {
+                    // rip.
+                    lex_error(e, span, &mut result_span, &mut errors);
+                    None
+                }
+                res @ Some((Ok(x @ (Token::Assign | Token::Colon)), _)) => {
+                    if x == &Token::Colon {
+                        // wrong language buddy
+                        expected_got_error_from_peek_result(
+                            vec![TokenClass::Assign],
+                            res,
+                            &mut result_span,
+                            &mut errors,
+                        );
+                    }
+                    // So at this point, the past expression wasn't actually an expression. Probably.
+                    // This matches the form { key = value }, so we try to unwrap the expression to get a name.
+                    if let Exp::PrefixExp(Spanned(
+                        PrefixExp::Var(Spanned(Var::Name(field), _)),
+                        _,
+                    )) = maybe_exp.0
+                    {
+                        // yay!
+                        input.next();
+                        let val = unbox(parse_exp(input), &mut result_span, &mut errors);
+                        Some(Field::Named {
+                            field,
+                            val: Box::new(val),
+                        })
+                    } else {
+                        // Alright. This is illegal.
+                        // TODO: reference the full expression
+                        expected_got_error_from_peek_result(
+                            vec![TokenClass::Ident],
+                            backup.as_ref(),
+                            &mut result_span,
+                            &mut errors,
+                        );
+                        // Nevertheless, we can assume what was intended.
+                        input.next();
+                        let val = unbox(parse_exp(input), &mut result_span, &mut errors);
+                        Some(Field::Exp {
+                            field: Box::new(maybe_exp),
+                            val: Box::new(val),
+                        })
+                    }
+                }
+                Some((Ok(Token::Comma | Token::Semi), _)) => {
+                    // cool! it was just an expression!
+                    Some(Field::Unnamed {
+                        val: Box::new(maybe_exp),
+                    })
+                }
+                x => {
+                    // uhhhhhhh wut
+                    expected_got_error_from_peek_result(
+                        vec![TokenClass::Assign, TokenClass::Comma, TokenClass::Semi],
+                        x,
+                        &mut result_span,
+                        &mut errors,
+                    );
+                    // i don't even know how to recover at this point; i legit don't know how we could have possibly gotten here.
+                    None
+                }
+            }
+        }
+        _ => todo!(), // unnamed, expression-indexed
+    }
+    .unwrap_or_else(|| {
+        recover(input, vec![Token::Comma, Token::Semi, Token::CBrace]);
+        Field::Unnamed {
+            val: Box::new(synth!(Exp::Error)),
+        }
+    });
+
+    finish(s!(field, result_span.unwrap_or(SYNTHETIC_SPAN)), errors)
 }
 
 fn parse_atom<'a, E: Clone + fmt::Debug>(
@@ -340,6 +431,10 @@ fn parse_atom<'a, E: Clone + fmt::Debug>(
     let mut errors = vec![];
 
     let result_atom = match input.peek() {
+        Some((Err(e), span)) => {
+            lex_error(e, span, &mut result_span, &mut errors);
+            None
+        }
         Some((Ok(Token::Nil), span)) => {
             update_span(&mut result_span, span);
             input.next();
@@ -1226,6 +1321,58 @@ pub fn parse_stat<'a, E: Clone + fmt::Debug>(
                         );
                         None
                     }
+                }
+            }
+            Some((Ok(Token::Function), span)) => {
+                update_span(&mut result_span, span);
+                input.next();
+                let mut path = vec![unbox(parse_ident(input), &mut result_span, &mut errors)];
+                let mut path_span = None;
+                let mut name_span = None;
+                let mut method = None;
+
+                let exit = loop {
+                    match input.peek() {
+                        Some((Err(e), span)) => {
+                            lex_error(e, span, &mut result_span, &mut errors);
+                            break true;
+                        }
+                        Some((Ok(Token::OParen), _)) => break false, // start of funcbody
+                        Some((Ok(Token::Dot), _)) => {
+                            input.next();
+                            path.push(unbox(parse_ident(input), &mut path_span, &mut errors));
+                        }
+                        Some((Ok(Token::Colon), _)) => {
+                            input.next();
+                            method = Some(unbox(parse_ident(input), &mut name_span, &mut errors));
+                            break false; // Expect funcbody after this
+                        }
+                        x => {
+                            expected_got_error_from_peek_result(
+                                vec![TokenClass::Dot, TokenClass::Colon, TokenClass::OParen],
+                                x,
+                                &mut result_span,
+                                &mut errors,
+                            );
+                            break true;
+                        }
+                    }
+                };
+
+                if exit {
+                    None
+                } else {
+                    let path_span = path_span.unwrap_or(SYNTHETIC_SPAN);
+                    update_span(&mut name_span, &path_span);
+                    let path = s!(path, path_span);
+
+                    let name_span = name_span.unwrap_or(SYNTHETIC_SPAN);
+                    update_span(&mut result_span, &name_span);
+                    let name = s!(FuncName { path, method }, name_span);
+
+                    let body = unbox(parse_func_body(input), &mut result_span, &mut errors);
+
+                    Some(Stat::Function { name, body })
                 }
             }
             x => {

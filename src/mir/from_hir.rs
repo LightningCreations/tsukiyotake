@@ -103,7 +103,7 @@ impl<'src> MirConverter<'src> {
         if let Some(x) = self.vars_by_name.get(name) {
             *x
         } else {
-            todo!()
+            self.add_var(synth!(name.into())) // TODO: add the variable with the correct span
         }
     }
 

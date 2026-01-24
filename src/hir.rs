@@ -146,6 +146,21 @@ fn unbox<'src, T>(
     result
 }
 
+// path must be at least one element long
+fn path_to_ast_var<'src>(path: &[Spanned<Cow<'src, str>>]) -> ast::Var<'src> {
+    match path {
+        [a] => ast::Var::Name(a.clone()),
+        [a @ .., b] => {
+            let lhs = path_to_ast_var(a);
+            ast::Var::Path {
+                lhs: Box::new(synth!(ast::PrefixExp::Var(synth!(lhs)))),
+                member: b.clone(),
+            }
+        }
+        [] => unreachable!(), // by contract
+    }
+}
+
 impl<'src> HirConversionContext<'src> {
     pub fn new() -> Self {
         Self {
@@ -156,7 +171,7 @@ impl<'src> HirConversionContext<'src> {
         }
     }
 
-    pub fn convert_block(mut self, ast: &'src ast::Block<'src>) -> Block<'src> {
+    pub fn convert_block(mut self, ast: &ast::Block<'src>) -> Block<'src> {
         let mut stats = ast
             .stats
             .iter()
@@ -179,10 +194,16 @@ impl<'src> HirConversionContext<'src> {
 
     pub fn convert_func_body(
         &mut self,
-        ast: Spanned<&'src ast::FuncBody<'src>>,
+        ast: Spanned<&ast::FuncBody<'src>>,
+        is_method: bool,
     ) -> Spanned<FuncBody<'src>> {
         let span = ast.1.clone();
-        let params = ast.0.params.clone();
+        let mut params = ast.0.params.clone();
+
+        if is_method {
+            params.insert(0, synth!("self".into()));
+        }
+
         let ctx = self.descend();
         let block = ast.0.block.as_ref().map(|x| ctx.convert_block(x));
         self.import_locals.extend(block.import_locals.clone());
@@ -199,7 +220,7 @@ impl<'src> HirConversionContext<'src> {
 
     fn fn_helper(
         &mut self,
-        call: Spanned<&'src ast::FunctionCall<'src>>,
+        call: Spanned<&ast::FunctionCall<'src>>,
     ) -> (Spanned<FunctionCall<'src>>, Vec<Spanned<Stat<'src>>>) {
         // Needs to be handled specially; just about every possible function call scenario is different.
         let mut stats = vec![];
@@ -247,10 +268,7 @@ impl<'src> HirConversionContext<'src> {
     }
 
     // ast::Stat::Empty is converted into None
-    pub fn convert_stat(
-        &mut self,
-        ast: Spanned<&'src ast::Stat<'src>>,
-    ) -> Vec<Spanned<Stat<'src>>> {
+    pub fn convert_stat(&mut self, ast: Spanned<&ast::Stat<'src>>) -> Vec<Spanned<Stat<'src>>> {
         let mut stats = vec![];
         match &*ast {
             ast::Stat::Empty => {}
@@ -320,9 +338,27 @@ impl<'src> HirConversionContext<'src> {
                 block,
             } => todo!(),
             ast::Stat::ForGeneric { names, exps, block } => todo!(),
-            ast::Stat::Function { name, body } => todo!(),
+            ast::Stat::Function { name, body } => {
+                let mut path = name.path.clone();
+                if let Some(method) = &name.method {
+                    path.push(method.clone());
+                    path.1.end = method.1.end;
+                }
+                let body = self.convert_func_body(body.as_ref(), name.method.is_some());
+                let stat = s!(
+                    Stat::Assign {
+                        vars: synth!(vec![unbox(
+                            self.convert_var(path.map(|x| path_to_ast_var(&x)).as_ref()),
+                            &mut stats
+                        )]),
+                        exps: synth!(vec![synth!(Exp::FunctionDef(body))]),
+                    },
+                    ast.1
+                );
+                stats.push(stat);
+            }
             ast::Stat::LocalFunction { name, body } => {
-                let function = self.convert_func_body(body.as_ref());
+                let function = self.convert_func_body(body.as_ref(), false);
                 stats.push(s!(
                     Stat::Local {
                         names: synth!(vec![name.clone()]),
@@ -362,7 +398,7 @@ impl<'src> HirConversionContext<'src> {
 
     pub fn convert_var(
         &mut self,
-        ast: Spanned<&'src ast::Var<'src>>,
+        ast: Spanned<&ast::Var<'src>>,
     ) -> (Spanned<Var<'src>>, Vec<Spanned<Stat<'src>>>) {
         let mut stats = vec![];
         let var = ast.map(|x| match x {
@@ -390,7 +426,7 @@ impl<'src> HirConversionContext<'src> {
 
     pub fn convert_exp(
         &mut self,
-        ast: Spanned<&'src ast::Exp<'src>>,
+        ast: Spanned<&ast::Exp<'src>>,
     ) -> (Spanned<Exp<'src>>, Vec<Spanned<Stat<'src>>>) {
         let mut stats = vec![];
         let exp = ast.map(|x| match x {
@@ -401,7 +437,7 @@ impl<'src> HirConversionContext<'src> {
             ast::Exp::NumeralFloat(x) => Exp::NumeralFloat(x.clone()),
             ast::Exp::LiteralString(x) => Exp::LiteralString(x.clone()),
             ast::Exp::VarArg => Exp::VarArg,
-            ast::Exp::FunctionDef(x) => Exp::FunctionDef(self.convert_func_body(x.as_ref())),
+            ast::Exp::FunctionDef(x) => Exp::FunctionDef(self.convert_func_body(x.as_ref(), false)),
             ast::Exp::PrefixExp(x) => unbox(self.convert_prefix_exp(x.as_ref()), &mut stats).0,
             ast::Exp::TableConstructor(x) => {
                 let mut hash_part = Vec::new();
@@ -448,7 +484,7 @@ impl<'src> HirConversionContext<'src> {
 
     pub fn convert_prefix_exp(
         &mut self,
-        ast: Spanned<&'src ast::PrefixExp<'src>>,
+        ast: Spanned<&ast::PrefixExp<'src>>,
     ) -> (Spanned<Exp<'src>>, Vec<Spanned<Stat<'src>>>) {
         let mut stats = vec![];
         let exp = ast.map(|x| match x {
@@ -478,7 +514,7 @@ impl<'src> HirConversionContext<'src> {
 
     pub fn convert_args(
         &mut self,
-        ast: Spanned<&'src ast::Args<'src>>,
+        ast: Spanned<&ast::Args<'src>>,
     ) -> (List<Exp<'src>>, Vec<Spanned<Stat<'src>>>) {
         let mut stats = vec![];
         let args = match &*ast {
@@ -497,13 +533,13 @@ impl<'src> HirConversionContext<'src> {
     }
 
     // why does this take &mut self? because it will take steps to place things in scope if they're in the parent scope :)
-    fn in_scope(&mut self, var: &'src str) -> bool {
+    fn in_scope(&mut self, var: &str) -> bool {
         var == "_ENV"
             || self.locals.contains(var)
             || self.import_locals.contains(var)
             || if self.parent_locals.contains(var) {
                 // side effects in a conditional? scandalous
-                self.import_locals.insert(var.into());
+                self.import_locals.insert(String::from(var).into());
                 true
             } else {
                 false
