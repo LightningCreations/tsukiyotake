@@ -225,7 +225,13 @@ impl<'src> MirConverter<'src> {
         Multival::Concat(vec![Multival::FixedList(first), last])
     }
 
-    fn write_stat(&mut self, stat: Spanned<&'src hir::Stat<'src>>) {
+    /// Returns true if a terminator was written
+    fn write_stat(
+        &mut self,
+        stat: Spanned<&'src hir::Stat<'src>>,
+        break_block_id: Option<BasicBlockId>,
+        continue_block_id: Option<BasicBlockId>,
+    ) -> bool {
         match stat.0 {
             hir::Stat::Assign { vars, exps } => {
                 // Figure out what assignments we need to make first
@@ -371,11 +377,16 @@ impl<'src> MirConverter<'src> {
                     self.basic_blocks
                         .push(self.cur_block.finish_and_reset(Some(term)));
                 }
-                for (id, block) in code_block_ids.into_iter().zip(code_blocks) {
-                    self.next_block = id;
-                    self.write_block_inner(id, block, Some(final_terminator.clone()));
-                }
                 self.next_block = cur_block_id;
+                for (id, block) in code_block_ids.into_iter().zip(code_blocks) {
+                    self.write_block_inner(
+                        id,
+                        block,
+                        Some(final_terminator.clone()),
+                        break_block_id,
+                        continue_block_id,
+                    );
+                }
                 self.cur_block.id = cur_block_id;
             }
             hir::Stat::Local { names, exps } => {
@@ -394,8 +405,90 @@ impl<'src> MirConverter<'src> {
                     self.cur_block.push(statement);
                 }
             }
+            hir::Stat::While { cond, block } => {
+                // This is a bit similar to if-else blocks in terms of how we handle it, the main difference being that in this we loop. Easy, right?
+
+                // Step 1: figure out what block ids we care about
+                let continue_block_id = self.next_block.next(); // contains the loop branch itself
+                let break_block_id = continue_block_id.next(); // contains a jump to the end; we have to fill this out last.
+                let loop_body_id = break_block_id.next(); // contains the start of the loop body
+
+                // Step 2: write the jump to the condition
+                self.basic_blocks
+                    .push(
+                        self.cur_block
+                            .finish_and_reset(Some(synth!(Terminator::Jump(JumpTarget {
+                                targ_bb: continue_block_id,
+                                remaps: vec![]
+                            })))),
+                    );
+
+                // Step 3: write the condition block
+                self.cur_block.id = continue_block_id;
+                let cond = self.convert_exp(cond.as_ref());
+                self.basic_blocks
+                    .push(
+                        self.cur_block
+                            .finish_and_reset(Some(synth!(Terminator::Branch(
+                                cond,
+                                JumpTarget {
+                                    targ_bb: loop_body_id,
+                                    remaps: vec![]
+                                },
+                                JumpTarget {
+                                    targ_bb: break_block_id,
+                                    remaps: vec![]
+                                }
+                            )))),
+                    );
+
+                // Step 4: write the loop body itself
+                self.next_block = loop_body_id;
+                self.write_block_inner(
+                    loop_body_id,
+                    block,
+                    Some(synth!(Terminator::Jump(JumpTarget {
+                        targ_bb: continue_block_id,
+                        remaps: vec![]
+                    }))),
+                    Some(break_block_id),
+                    Some(continue_block_id),
+                );
+
+                // Step 5: write the final block
+                self.cur_block.id = break_block_id;
+                self.basic_blocks
+                    .push(
+                        self.cur_block
+                            .finish_and_reset(Some(synth!(Terminator::Jump(JumpTarget {
+                                targ_bb: self.next_block,
+                                remaps: vec![]
+                            })))),
+                    );
+                self.cur_block.id = self.next_block;
+            }
+            hir::Stat::Break => {
+                if let Some(break_block_id) = break_block_id {
+                    self.basic_blocks
+                        .push(self.cur_block.finish_and_reset(Some(s!(
+                            Terminator::Jump(JumpTarget {
+                                targ_bb: break_block_id,
+                                remaps: vec![],
+                            }),
+                            stat.1
+                        ))));
+                } else {
+                    self.basic_blocks
+                        .push(self.cur_block.finish_and_reset(Some(s!(
+                            Terminator::DeferError(synth!("break executed outside of loop".into())),
+                            stat.1
+                        ))));
+                }
+                return true;
+            }
             x => todo!("{x:?}"),
         }
+        false
     }
 
     fn write_block_inner(
@@ -403,10 +496,15 @@ impl<'src> MirConverter<'src> {
         block_id: BasicBlockId,
         block: &'src hir::Block<'src>,
         terminator: Option<Spanned<Terminator>>,
+        break_block_id: Option<BasicBlockId>,
+        continue_block_id: Option<BasicBlockId>,
     ) {
         self.cur_block.id = block_id;
         for stat in &block.stats {
-            self.write_stat(stat.as_ref());
+            if self.write_stat(stat.as_ref(), break_block_id, continue_block_id) {
+                self.next_block = self.next_block.next();
+                return; // Terminator has been created early; bail
+            }
         }
         if let Some(retstat) = &block.retstat {
             let terminator = retstat
@@ -418,10 +516,11 @@ impl<'src> MirConverter<'src> {
             self.basic_blocks
                 .push(self.cur_block.finish_and_reset(terminator));
         }
+        self.next_block = self.next_block.next();
     }
 
     pub fn write_block(&mut self, block: &'src hir::Block<'src>) {
-        self.write_block_inner(self.next_block, block, None);
+        self.write_block_inner(self.next_block, block, None, None, None);
     }
 
     pub fn finish(mut self) -> FunctionDef {

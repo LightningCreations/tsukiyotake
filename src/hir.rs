@@ -45,18 +45,6 @@ pub enum Stat<'src> {
         cond_blocks: Vec<(Spanned<Exp<'src>>, Box<Spanned<Block<'src>>>)>,
         else_block: Option<Box<Spanned<Block<'src>>>>,
     },
-    ForNumerical {
-        var: Spanned<&'src str>,
-        initial: Spanned<Exp<'src>>,
-        limit: Spanned<Exp<'src>>,
-        step: Option<Spanned<Exp<'src>>>,
-        block: Box<Spanned<Block<'src>>>,
-    },
-    ForGeneric {
-        names: List<&'src str>,
-        exps: List<Exp<'src>>,
-        block: Box<Spanned<Block<'src>>>,
-    },
     Local {
         names: List<Cow<'src, str>>,
         exps: Option<List<Exp<'src>>>,
@@ -192,6 +180,15 @@ impl<'src> HirConversionContext<'src> {
         }
     }
 
+    fn grab_locals(&mut self, block: &Block<'src>) {
+        self.import_locals.extend(
+            block
+                .import_locals
+                .iter().cloned()
+                .filter(|x| !self.locals.contains(x)),
+        );
+    }
+
     pub fn convert_func_body(
         &mut self,
         ast: Spanned<&ast::FuncBody<'src>>,
@@ -206,7 +203,7 @@ impl<'src> HirConversionContext<'src> {
 
         let ctx = self.descend();
         let block = ast.0.block.as_ref().map(|x| ctx.convert_block(x));
-        self.import_locals.extend(block.import_locals.clone());
+        self.grab_locals(&block);
 
         s!(
             FuncBody {
@@ -290,10 +287,17 @@ impl<'src> HirConversionContext<'src> {
                 stats.push(s!(Stat::FunctionCall { call, target: None }, ast.1));
             }
             ast::Stat::Label(spanned) => todo!(),
-            ast::Stat::Break => todo!(),
+            ast::Stat::Break => stats.push(s!(Stat::Break, ast.1)),
             ast::Stat::Goto(spanned) => todo!(),
             ast::Stat::DoBlock(spanned) => todo!(),
-            ast::Stat::While { cond, block } => todo!(),
+            ast::Stat::While { cond, block } => {
+                let cond = unbox(self.convert_exp(cond.as_ref()), &mut stats);
+                let ctx = self.descend();
+                let block = Box::new((**block).as_ref().map(|x| ctx.convert_block(x)));
+                self.grab_locals(&block);
+
+                stats.push(s!(Stat::While { cond, block }, ast.1));
+            }
             ast::Stat::RepeatUntil { block, cond } => todo!(),
             ast::Stat::If {
                 main,
@@ -308,7 +312,7 @@ impl<'src> HirConversionContext<'src> {
                         let cond = unbox(self.convert_exp(cond.as_ref()), &mut stats);
                         let ctx = self.descend();
                         let block = Box::new((**block).as_ref().map(|x| ctx.convert_block(x)));
-                        self.import_locals.extend(block.import_locals.clone());
+                        self.grab_locals(&block);
                         (cond, block)
                     })
                     .collect();
@@ -317,7 +321,7 @@ impl<'src> HirConversionContext<'src> {
                     Box::new((**x).as_ref().map(|block| {
                         let ctx = self.descend();
                         let block = ctx.convert_block(block);
-                        self.import_locals.extend(block.import_locals.clone());
+                        self.grab_locals(&block);
                         block
                     }))
                 });

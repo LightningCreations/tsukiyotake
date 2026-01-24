@@ -44,6 +44,7 @@ pub enum TokenClass {
     LAngle,
     RAngle,
 
+    Do,
     Then,
 
     Function,
@@ -1036,6 +1037,45 @@ fn eat_then<'a, E: Clone + fmt::Debug>(
     finish(s!((), result_span.unwrap_or(SYNTHETIC_SPAN)), errors)
 }
 
+fn eat_do<'a, E: Clone + fmt::Debug>(
+    input: &mut Peekable<impl Iterator<Item = (Result<Token<'a>, E>, Span)>>,
+) -> ParseResult<'a, (), E> {
+    let mut result_span = None;
+    let mut errors = vec![];
+
+    match input.peek() {
+        Some((Err(e), span)) => {
+            lex_error(e, span, &mut result_span, &mut errors);
+            input.next();
+        }
+        Some((Ok(Token::Do), _)) => {
+            // good!
+            input.next();
+        }
+        x @ Some((Ok(Token::Then | Token::Colon), _)) => {
+            // well. that's the wrong block start.
+            expected_got_error_from_peek_result(
+                vec![TokenClass::Then],
+                x,
+                &mut result_span,
+                &mut errors,
+            );
+            input.next(); // but we're gonna assume they *intended* `then` and just eat the token anyway
+        }
+        x => {
+            // annnnd they forgot entirely and just started the body. Oh well.
+            expected_got_error_from_peek_result(
+                vec![TokenClass::Do],
+                x,
+                &mut result_span,
+                &mut errors,
+            );
+        }
+    }
+
+    finish(s!((), result_span.unwrap_or(SYNTHETIC_SPAN)), errors)
+}
+
 pub fn parse_stat<'a, E: Clone + fmt::Debug>(
     input: &mut Peekable<impl Iterator<Item = (Result<Token<'a>, E>, Span)>>,
 ) -> ParseResult<'a, Stat<'a>, E> {
@@ -1374,6 +1414,39 @@ pub fn parse_stat<'a, E: Clone + fmt::Debug>(
 
                     Some(Stat::Function { name, body })
                 }
+            }
+            Some((Ok(Token::While), span)) => {
+                update_span(&mut result_span, span);
+                input.next();
+
+                let cond = unbox(parse_exp(input), &mut result_span, &mut errors);
+                unbox(eat_do(input), &mut result_span, &mut errors);
+                let block = Box::new(unbox(parse_block(input), &mut result_span, &mut errors));
+                match input.peek() {
+                    Some((Err(e), span)) => {
+                        lex_error(e, span, &mut result_span, &mut errors);
+                        input.next();
+                    }
+                    Some((Ok(Token::End), span)) => {
+                        update_span(&mut result_span, span);
+                        input.next();
+                    }
+                    x => {
+                        expected_got_error_from_peek_result(
+                            vec![TokenClass::EndOfBlock],
+                            x,
+                            &mut result_span,
+                            &mut errors,
+                        );
+                    }
+                }
+
+                Some(Stat::While { cond, block })
+            }
+            Some((Ok(Token::Break), span)) => {
+                update_span(&mut result_span, span);
+                input.next();
+                Some(Stat::Break)
             }
             x => {
                 expected_got_error_from_peek_result(
