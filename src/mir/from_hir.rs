@@ -336,12 +336,12 @@ impl<'src> MirConverter<'src> {
                 // Instead, we'll do this in stages.
 
                 // First, we'll generate the block terminators for the "scaffolding" of the fan, i.e. everything but the code inside the if-else blocks.
-                let mut cur_block_id = self.next_block;
+                let mut cur_block_id = self.cur_block.id;
                 let mut terminators = Vec::new();
                 let mut code_block_ids = Vec::new();
                 for (exp, _) in cond_blocks {
-                    let code_block_id = cur_block_id.next();
-                    let next_block_id = code_block_id.next();
+                    let code_block_id = self.next_available_block();
+                    let next_block_id = self.next_available_block();
                     terminators.push((
                         cur_block_id,
                         s!(
@@ -365,7 +365,7 @@ impl<'src> MirConverter<'src> {
                 let mut code_blocks = cond_blocks.iter().map(|(_, x)| &**x).collect::<Vec<_>>();
                 if let Some(else_block) = else_block {
                     code_block_ids.push(cur_block_id);
-                    cur_block_id = cur_block_id.next();
+                    cur_block_id = self.next_available_block();
                     code_blocks.push(else_block);
                 }
                 let final_terminator = synth!(Terminator::Jump(JumpTarget {
@@ -377,7 +377,6 @@ impl<'src> MirConverter<'src> {
                     self.basic_blocks
                         .push(self.cur_block.finish_and_reset(Some(term)));
                 }
-                self.next_block = cur_block_id;
                 for (id, block) in code_block_ids.into_iter().zip(code_blocks) {
                     self.write_block_inner(
                         id,
@@ -413,14 +412,12 @@ impl<'src> MirConverter<'src> {
                 // This is a bit similar to if-else blocks in terms of how we handle it, the main difference being that in this we loop. Easy, right?
 
                 // Step 1: figure out what block ids we care about
-                let pre_continue_block_id = pre_continue_block.as_ref().map(|_| {
-                    let result = self.next_block.next();
-                    self.next_block = result;
-                    result
-                }); // contains any extra instructions to run at the end of a loop cycle
-                let continue_block_id = self.next_block.next(); // contains the loop branch itself
-                let break_block_id = continue_block_id.next(); // contains a jump to the end; we have to fill this out last.
-                let loop_body_id = break_block_id.next(); // contains the start of the loop body
+                let pre_continue_block_id = pre_continue_block
+                    .as_ref()
+                    .map(|_| self.next_available_block()); // contains any extra instructions to run at the end of a loop cycle
+                let continue_block_id = self.next_available_block(); // contains the loop branch itself
+                let break_block_id = self.next_available_block(); // contains a jump to the end; we have to fill this out last.
+                let loop_body_id = self.next_available_block(); // contains the start of the loop body
 
                 // Step 2: write the jump to the condition
                 self.basic_blocks
@@ -451,8 +448,21 @@ impl<'src> MirConverter<'src> {
                             )))),
                     );
 
+                // Step 4: write the loop body itself
+                let true_continue_block_id = pre_continue_block_id.unwrap_or(continue_block_id);
+                self.write_block_inner(
+                    loop_body_id,
+                    block,
+                    Some(synth!(Terminator::Jump(JumpTarget {
+                        targ_bb: true_continue_block_id,
+                        remaps: vec![]
+                    }))),
+                    Some(break_block_id),
+                    Some(true_continue_block_id),
+                );
+
                 if let Some(pre_continue_block) = pre_continue_block {
-                    // Step 3.5: write the pre-continue block
+                    // Step 4.5: write the pre-continue block
                     self.write_block_inner(
                         pre_continue_block_id.unwrap(),
                         pre_continue_block,
@@ -465,31 +475,18 @@ impl<'src> MirConverter<'src> {
                     );
                 }
 
-                // Step 4: write the loop body itself
-                let true_continue_block_id = pre_continue_block_id.unwrap_or(continue_block_id);
-                self.next_block = loop_body_id;
-                self.write_block_inner(
-                    loop_body_id,
-                    block,
-                    Some(synth!(Terminator::Jump(JumpTarget {
-                        targ_bb: true_continue_block_id,
-                        remaps: vec![]
-                    }))),
-                    Some(break_block_id),
-                    Some(true_continue_block_id),
-                );
-
                 // Step 5: write the final break block
                 self.cur_block.id = break_block_id;
+                let continue_block = self.next_available_block();
                 self.basic_blocks
                     .push(
                         self.cur_block
                             .finish_and_reset(Some(synth!(Terminator::Jump(JumpTarget {
-                                targ_bb: self.next_block,
+                                targ_bb: continue_block,
                                 remaps: vec![]
                             })))),
                     );
-                self.cur_block.id = self.next_block;
+                self.cur_block.id = continue_block;
             }
             hir::Stat::Break => {
                 if let Some(break_block_id) = break_block_id {
@@ -534,7 +531,6 @@ impl<'src> MirConverter<'src> {
         self.cur_block.id = block_id;
         for stat in &block.stats {
             if self.write_stat(stat.as_ref(), break_block_id, continue_block_id) {
-                self.next_block = self.next_block.next();
                 return; // Terminator has been created early; bail
             }
         }
@@ -548,11 +544,17 @@ impl<'src> MirConverter<'src> {
             self.basic_blocks
                 .push(self.cur_block.finish_and_reset(terminator));
         }
+    }
+
+    fn next_available_block(&mut self) -> BasicBlockId {
+        let result = self.next_block;
         self.next_block = self.next_block.next();
+        result
     }
 
     pub fn write_block(&mut self, block: &'src hir::Block<'src>) {
-        self.write_block_inner(self.next_block, block, None, None, None);
+        let block_id = self.next_available_block();
+        self.write_block_inner(block_id, block, None, None, None);
     }
 
     pub fn finish(mut self) -> FunctionDef {
