@@ -6,6 +6,7 @@ use alloc::string::String;
 use alloc::{boxed::Box, vec::Vec};
 use alloc::{format, vec};
 use hashbrown::HashSet;
+use tsukiyotake_grammar::ast::SYNTHETIC_SPAN;
 use tsukiyotake_grammar::{s, synth};
 
 use crate::ast;
@@ -36,6 +37,7 @@ pub enum Stat<'src> {
     While {
         cond: Spanned<Exp<'src>>,
         block: Box<Spanned<Block<'src>>>,
+        pre_continue_block: Option<Box<Spanned<Block<'src>>>>, // used by for loop
     },
     RepeatUntil {
         block: Box<Spanned<Block<'src>>>,
@@ -49,6 +51,7 @@ pub enum Stat<'src> {
         names: List<Cow<'src, str>>,
         exps: Option<List<Exp<'src>>>,
     },
+    RtError(Cow<'src, str>), // used if we need to raise an error in a certain circumstance but won't technically know if it'll happen until runtime
 }
 
 // Otherwise known as lvalue
@@ -184,7 +187,8 @@ impl<'src> HirConversionContext<'src> {
         self.import_locals.extend(
             block
                 .import_locals
-                .iter().cloned()
+                .iter()
+                .cloned()
                 .filter(|x| !self.locals.contains(x)),
         );
     }
@@ -296,7 +300,14 @@ impl<'src> HirConversionContext<'src> {
                 let block = Box::new((**block).as_ref().map(|x| ctx.convert_block(x)));
                 self.grab_locals(&block);
 
-                stats.push(s!(Stat::While { cond, block }, ast.1));
+                stats.push(s!(
+                    Stat::While {
+                        cond,
+                        block,
+                        pre_continue_block: None
+                    },
+                    ast.1
+                ));
             }
             ast::Stat::RepeatUntil { block, cond } => todo!(),
             ast::Stat::If {
@@ -340,7 +351,154 @@ impl<'src> HirConversionContext<'src> {
                 limit,
                 step,
                 block,
-            } => todo!(),
+            } => {
+                // TODO: technically all of this should be happening in a separate context so that the control variable goes out of scope.
+                // Step 1: set up variables
+                self.locals.insert(var.0.clone());
+                let control_var_name = var.clone();
+                let initial_var_name = s!(self.new_local(), initial.1.clone()); // for overflow
+                let limit_var_name = s!(self.new_local(), limit.1.clone());
+                let step_var_name = s!(
+                    self.new_local(),
+                    step.as_ref().map_or(SYNTHETIC_SPAN, |x| x.1.clone())
+                );
+                let control_var = synth!(Var::Name(control_var_name.clone()));
+                let initial_var = synth!(Var::Name(initial_var_name.clone()));
+                let limit_var = synth!(Var::Name(limit_var_name.clone()));
+                let step_var = synth!(Var::Name(step_var_name.clone()));
+                let control_exp = synth!(Exp::Var(control_var.clone()));
+                let initial_exp = synth!(Exp::Var(initial_var));
+                let limit_exp = synth!(Exp::Var(limit_var));
+                let step_exp = synth!(Exp::Var(step_var));
+
+                // Step 2: assign loop variables
+                let locals_stat = synth!(Stat::Local {
+                    names: synth!(vec![
+                        initial_var_name.clone(),
+                        limit_var_name,
+                        step_var_name.clone()
+                    ]),
+                    exps: Some(synth!(vec![
+                        unbox(self.convert_exp(initial.as_ref()), &mut stats),
+                        unbox(self.convert_exp(limit.as_ref()), &mut stats),
+                        if let Some(step) = step {
+                            unbox(self.convert_exp(step.as_ref()), &mut stats)
+                        } else {
+                            synth!(Exp::NumeralInt(synth!(1)))
+                        }
+                    ]))
+                });
+                let assign_stat = synth!(Stat::Assign {
+                    vars: synth!(vec![control_var.clone()]),
+                    exps: synth!(vec![initial_exp.clone()])
+                });
+                stats.push(locals_stat);
+                stats.push(assign_stat);
+
+                // Step 3: generate the runtime error catcher
+                // Turns out, step can be 0. If it is, we need to error out immediately.
+                let error_cond = synth!(Exp::BinExp {
+                    lhs: Box::new(step_exp.clone()),
+                    op: BinOp::Eq,
+                    rhs: Box::new(synth!(Exp::NumeralInt(synth!(0)))),
+                });
+                let error_stat = synth!(Stat::If {
+                    cond_blocks: vec![(
+                        error_cond,
+                        Box::new(synth!(Block {
+                            locals: HashSet::default(),
+                            import_locals: HashSet::default(),
+                            stats: vec![synth!(Stat::RtError("'for' step is zero".into()))],
+                            retstat: None
+                        }))
+                    )],
+                    else_block: None
+                });
+                stats.push(error_stat);
+
+                // Step 4: generate the condition
+                // This is a massively complicated condition that attempts to handle every possible for loop case,
+                // as we don't *technically* know which way the loop is counting at this stage.
+                // Ideally, a future version of the engine will apply some measure of constant folding to make this more efficient.
+                let count_up_cond = synth!(Exp::BinExp {
+                    lhs: Box::new(synth!(Exp::BinExp {
+                        lhs: Box::new(control_exp.clone()),
+                        op: BinOp::Le,
+                        rhs: Box::new(limit_exp.clone()),
+                    })),
+                    op: BinOp::And,
+                    rhs: Box::new(synth!(Exp::BinExp {
+                        lhs: Box::new(control_exp.clone()),
+                        op: BinOp::Ge,
+                        rhs: Box::new(initial_exp.clone()),
+                    })),
+                });
+                let count_down_cond = synth!(Exp::BinExp {
+                    lhs: Box::new(synth!(Exp::BinExp {
+                        lhs: Box::new(control_exp.clone()),
+                        op: BinOp::Ge,
+                        rhs: Box::new(limit_exp.clone()),
+                    })),
+                    op: BinOp::And,
+                    rhs: Box::new(synth!(Exp::BinExp {
+                        lhs: Box::new(control_exp.clone()),
+                        op: BinOp::Le,
+                        rhs: Box::new(initial_exp.clone()),
+                    })),
+                });
+                let cond = synth!(Exp::BinExp {
+                    lhs: Box::new(synth!(Exp::BinExp {
+                        lhs: Box::new(synth!(Exp::BinExp {
+                            lhs: Box::new(step_exp.clone()),
+                            op: BinOp::Gt,
+                            rhs: Box::new(synth!(Exp::NumeralInt(synth!(0))))
+                        })),
+                        op: BinOp::And,
+                        rhs: Box::new(count_up_cond),
+                    })),
+                    op: BinOp::Or,
+                    rhs: Box::new(synth!(Exp::BinExp {
+                        lhs: Box::new(synth!(Exp::BinExp {
+                            lhs: Box::new(step_exp.clone()),
+                            op: BinOp::Lt,
+                            rhs: Box::new(synth!(Exp::NumeralInt(synth!(0))))
+                        })),
+                        op: BinOp::And,
+                        rhs: Box::new(count_down_cond),
+                    })),
+                });
+
+                // Step 5: generate the main block
+                let ctx = self.descend();
+                let block = Box::new((**block).as_ref().map(|x| ctx.convert_block(x)));
+                self.grab_locals(&block);
+
+                // Step 6: generate the pre-continue block (incrementing loop variables)
+                let pre_continue_block = Some(Box::new(synth!(Block {
+                    locals: HashSet::default(),
+                    import_locals: [control_var_name.0, step_var_name.0].into(),
+                    stats: vec![synth!(Stat::Assign {
+                        vars: synth!(vec![control_var]),
+                        exps: synth!(vec![synth!(Exp::BinExp {
+                            lhs: Box::new(control_exp),
+                            op: BinOp::Add,
+                            rhs: Box::new(step_exp),
+                        })]),
+                    })],
+                    retstat: None,
+                })));
+
+                // Step 7: put everything together
+                let while_stat = s!(
+                    Stat::While {
+                        cond,
+                        block,
+                        pre_continue_block,
+                    },
+                    ast.1
+                );
+                stats.push(while_stat);
+            }
             ast::Stat::ForGeneric { names, exps, block } => todo!(),
             ast::Stat::Function { name, body } => {
                 let mut path = name.path.clone();

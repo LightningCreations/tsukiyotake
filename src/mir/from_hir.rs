@@ -405,10 +405,19 @@ impl<'src> MirConverter<'src> {
                     self.cur_block.push(statement);
                 }
             }
-            hir::Stat::While { cond, block } => {
+            hir::Stat::While {
+                cond,
+                block,
+                pre_continue_block,
+            } => {
                 // This is a bit similar to if-else blocks in terms of how we handle it, the main difference being that in this we loop. Easy, right?
 
                 // Step 1: figure out what block ids we care about
+                let pre_continue_block_id = pre_continue_block.as_ref().map(|_| {
+                    let result = self.next_block.next();
+                    self.next_block = result;
+                    result
+                }); // contains any extra instructions to run at the end of a loop cycle
                 let continue_block_id = self.next_block.next(); // contains the loop branch itself
                 let break_block_id = continue_block_id.next(); // contains a jump to the end; we have to fill this out last.
                 let loop_body_id = break_block_id.next(); // contains the start of the loop body
@@ -442,20 +451,35 @@ impl<'src> MirConverter<'src> {
                             )))),
                     );
 
+                if let Some(pre_continue_block) = pre_continue_block {
+                    // Step 3.5: write the pre-continue block
+                    self.write_block_inner(
+                        pre_continue_block_id.unwrap(),
+                        pre_continue_block,
+                        Some(synth!(Terminator::Jump(JumpTarget {
+                            targ_bb: continue_block_id,
+                            remaps: vec![]
+                        }))),
+                        None, // don't allow this block to exit the loop
+                        None,
+                    );
+                }
+
                 // Step 4: write the loop body itself
+                let true_continue_block_id = pre_continue_block_id.unwrap_or(continue_block_id);
                 self.next_block = loop_body_id;
                 self.write_block_inner(
                     loop_body_id,
                     block,
                     Some(synth!(Terminator::Jump(JumpTarget {
-                        targ_bb: continue_block_id,
+                        targ_bb: true_continue_block_id,
                         remaps: vec![]
                     }))),
                     Some(break_block_id),
-                    Some(continue_block_id),
+                    Some(true_continue_block_id),
                 );
 
-                // Step 5: write the final block
+                // Step 5: write the final break block
                 self.cur_block.id = break_block_id;
                 self.basic_blocks
                     .push(
