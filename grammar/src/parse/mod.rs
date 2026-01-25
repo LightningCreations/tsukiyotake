@@ -21,6 +21,7 @@ pub enum TokenClass {
     And,
     Assign,
     Colon,
+    ColonColon,
     Comma,
     Dot,
     DotDot,
@@ -45,6 +46,7 @@ pub enum TokenClass {
     RAngle,
 
     Do,
+    In,
     Then,
 
     Function,
@@ -413,7 +415,15 @@ fn parse_table_field<'a, E: Clone + fmt::Debug>(
                 }
             }
         }
-        _ => todo!(), // unnamed, expression-indexed
+        Some((Ok(Token::OBrace), _)) => {
+            todo!()
+        }
+        _ => {
+            // So we're assuming this is an expression I guess. Unnamed.
+            Some(Field::Unnamed {
+                val: Box::new(unbox(parse_exp(input), &mut result_span, &mut errors)),
+            })
+        }
     }
     .unwrap_or_else(|| {
         recover(input, vec![Token::Comma, Token::Semi, Token::CBrace]);
@@ -966,24 +976,7 @@ pub fn parse_func_body<'a, E: Clone + fmt::Debug>(
 
     let block = unbox(parse_block(input), &mut result_span, &mut errors);
 
-    match input.next() {
-        Some((Err(e), span)) => {
-            lex_error(&e, &span, &mut result_span, &mut errors);
-            input.next();
-        }
-        Some((Ok(Token::End), _)) => {
-            // good!
-        }
-        x => {
-            // rip.
-            expected_got_error_from_peek_result(
-                vec![TokenClass::EndOfBlock],
-                x.as_ref(),
-                &mut result_span,
-                &mut errors,
-            );
-        }
-    }
+    unbox(eat_end(input), &mut result_span, &mut errors);
 
     finish(
         s!(
@@ -1066,6 +1059,35 @@ fn eat_do<'a, E: Clone + fmt::Debug>(
             // annnnd they forgot entirely and just started the body. Oh well.
             expected_got_error_from_peek_result(
                 vec![TokenClass::Do],
+                x,
+                &mut result_span,
+                &mut errors,
+            );
+        }
+    }
+
+    finish(s!((), result_span.unwrap_or(SYNTHETIC_SPAN)), errors)
+}
+
+fn eat_end<'a, E: Clone + fmt::Debug>(
+    input: &mut Peekable<impl Iterator<Item = (Result<Token<'a>, E>, Span)>>,
+) -> ParseResult<'a, (), E> {
+    let mut result_span = None;
+    let mut errors = vec![];
+
+    match input.peek() {
+        Some((Err(e), span)) => {
+            lex_error(e, span, &mut result_span, &mut errors);
+            input.next();
+        }
+        Some((Ok(Token::End), _)) => {
+            // good!
+            input.next();
+        }
+        x => {
+            // annnnd they forgot entirely and just started the body. Oh well.
+            expected_got_error_from_peek_result(
+                vec![TokenClass::EndOfBlock],
                 x,
                 &mut result_span,
                 &mut errors,
@@ -1422,26 +1444,252 @@ pub fn parse_stat<'a, E: Clone + fmt::Debug>(
                 let cond = unbox(parse_exp(input), &mut result_span, &mut errors);
                 unbox(eat_do(input), &mut result_span, &mut errors);
                 let block = Box::new(unbox(parse_block(input), &mut result_span, &mut errors));
+                unbox(eat_end(input), &mut result_span, &mut errors);
+
+                Some(Stat::While { cond, block })
+            }
+            Some((Ok(Token::For), span)) => {
+                update_span(&mut result_span, span);
+                input.next();
+
+                // Time for another case of "I wish I had more lookahead".
+                let first_name = unbox(parse_ident(input), &mut result_span, &mut errors);
+                match input.peek() {
+                    Some((Err(e), span)) => {
+                        lex_error(e, span, &mut result_span, &mut errors);
+                        input.next();
+                        None
+                    }
+                    Some((Ok(Token::Assign), _)) => {
+                        input.next();
+                        // Numerical for loop
+                        let initial = unbox(parse_exp(input), &mut result_span, &mut errors);
+                        match input.next() {
+                            Some((Err(e), span)) => {
+                                lex_error(&e, &span, &mut result_span, &mut errors);
+                                None
+                            }
+                            Some((Ok(Token::Comma), _)) => {
+                                // good!
+                                let limit = unbox(parse_exp(input), &mut result_span, &mut errors);
+                                match input.next() {
+                                    Some((Err(e), span)) => {
+                                        lex_error(&e, &span, &mut result_span, &mut errors);
+                                        None
+                                    }
+                                    Some((Ok(Token::Comma), _)) => {
+                                        // we get a step variable; alright.
+                                        let step =
+                                            unbox(parse_exp(input), &mut result_span, &mut errors);
+                                        match input.next() {
+                                            Some((Err(e), span)) => {
+                                                lex_error(&e, &span, &mut result_span, &mut errors);
+                                                None
+                                            }
+                                            Some((Ok(Token::Do), _)) => {
+                                                // no step, just a block
+                                                let block = Box::new(unbox(
+                                                    parse_block(input),
+                                                    &mut result_span,
+                                                    &mut errors,
+                                                ));
+                                                unbox(
+                                                    eat_end(input),
+                                                    &mut result_span,
+                                                    &mut errors,
+                                                );
+                                                Some(Stat::ForNumerical {
+                                                    var: first_name,
+                                                    initial,
+                                                    limit,
+                                                    step: Some(step),
+                                                    block,
+                                                })
+                                            }
+                                            x => {
+                                                expected_got_error_from_peek_result(
+                                                    vec![TokenClass::Comma],
+                                                    x.as_ref(),
+                                                    &mut result_span,
+                                                    &mut errors,
+                                                );
+                                                None
+                                            }
+                                        }
+                                    }
+                                    Some((Ok(Token::Do), _)) => {
+                                        // no step, just a block
+                                        let block = Box::new(unbox(
+                                            parse_block(input),
+                                            &mut result_span,
+                                            &mut errors,
+                                        ));
+                                        unbox(eat_end(input), &mut result_span, &mut errors);
+                                        Some(Stat::ForNumerical {
+                                            var: first_name,
+                                            initial,
+                                            limit,
+                                            step: None,
+                                            block,
+                                        })
+                                    }
+                                    x => {
+                                        expected_got_error_from_peek_result(
+                                            vec![TokenClass::Comma],
+                                            x.as_ref(),
+                                            &mut result_span,
+                                            &mut errors,
+                                        );
+                                        None
+                                    }
+                                }
+                            }
+                            x => {
+                                expected_got_error_from_peek_result(
+                                    vec![TokenClass::Comma],
+                                    x.as_ref(),
+                                    &mut result_span,
+                                    &mut errors,
+                                );
+                                None
+                            }
+                        }
+                    }
+                    Some((Ok(Token::Comma | Token::In), _)) => {
+                        // Generic for loop
+                        let mut names = vec![first_name];
+                        let mut names_span = Some(names[0].1.clone());
+                        let get_out = loop {
+                            match input.peek() {
+                                Some((Err(e), span)) => {
+                                    lex_error(e, span, &mut result_span, &mut errors);
+                                    input.next();
+                                    break true;
+                                }
+                                Some((Ok(Token::Comma), _)) => {
+                                    input.next();
+                                    names.push(unbox(
+                                        parse_ident(input),
+                                        &mut names_span,
+                                        &mut errors,
+                                    ));
+                                }
+                                Some((Ok(Token::In), _)) => {
+                                    input.next();
+                                    break false;
+                                }
+                                x => {
+                                    expected_got_error_from_peek_result(
+                                        vec![TokenClass::Comma, TokenClass::In],
+                                        x,
+                                        &mut result_span,
+                                        &mut errors,
+                                    );
+                                    break true;
+                                }
+                            }
+                        };
+
+                        if get_out {
+                            None
+                        } else {
+                            let names_span = names_span.unwrap();
+                            update_span(&mut result_span, &names_span);
+                            let names = s!(names, names_span);
+
+                            let mut exps =
+                                vec![unbox(parse_exp(input), &mut result_span, &mut errors)];
+                            let mut exps_span = Some(exps[0].1.clone());
+                            let get_out = loop {
+                                match input.peek() {
+                                    Some((Err(e), span)) => {
+                                        lex_error(e, span, &mut result_span, &mut errors);
+                                        input.next();
+                                        break true;
+                                    }
+                                    Some((Ok(Token::Comma), _)) => {
+                                        input.next();
+                                        exps.push(unbox(
+                                            parse_exp(input),
+                                            &mut exps_span,
+                                            &mut errors,
+                                        ));
+                                    }
+                                    Some((Ok(Token::Do), _)) => {
+                                        input.next();
+                                        break false;
+                                    }
+                                    x => {
+                                        expected_got_error_from_peek_result(
+                                            vec![TokenClass::Comma, TokenClass::Do],
+                                            x,
+                                            &mut result_span,
+                                            &mut errors,
+                                        );
+                                        break true;
+                                    }
+                                }
+                            };
+                            if get_out {
+                                None
+                            } else {
+                                let exps_span = exps_span.unwrap();
+                                update_span(&mut result_span, &exps_span);
+                                let exps = s!(exps, exps_span);
+
+                                let block = Box::new(unbox(
+                                    parse_block(input),
+                                    &mut result_span,
+                                    &mut errors,
+                                ));
+                                unbox(eat_end(input), &mut result_span, &mut errors);
+                                Some(Stat::ForGeneric { names, exps, block })
+                            }
+                        }
+                    }
+                    x => {
+                        expected_got_error_from_peek_result(
+                            vec![TokenClass::Assign, TokenClass::Comma, TokenClass::In],
+                            x,
+                            &mut result_span,
+                            &mut errors,
+                        );
+                        None
+                    }
+                }
+            }
+            Some((Ok(Token::Goto), span)) => {
+                update_span(&mut result_span, span);
+                input.next();
+                Some(Stat::Goto(unbox(
+                    parse_ident(input),
+                    &mut result_span,
+                    &mut errors,
+                )))
+            }
+            Some((Ok(Token::ColonColon), span)) => {
+                update_span(&mut result_span, span);
+                input.next();
+                let label = unbox(parse_ident(input), &mut result_span, &mut errors);
                 match input.peek() {
                     Some((Err(e), span)) => {
                         lex_error(e, span, &mut result_span, &mut errors);
                         input.next();
                     }
-                    Some((Ok(Token::End), span)) => {
+                    Some((Ok(Token::ColonColon), span)) => {
                         update_span(&mut result_span, span);
                         input.next();
                     }
                     x => {
                         expected_got_error_from_peek_result(
-                            vec![TokenClass::EndOfBlock],
+                            vec![TokenClass::ColonColon],
                             x,
                             &mut result_span,
                             &mut errors,
                         );
                     }
                 }
-
-                Some(Stat::While { cond, block })
+                Some(Stat::Label(label))
             }
             Some((Ok(Token::Break), span)) => {
                 update_span(&mut result_span, span);
