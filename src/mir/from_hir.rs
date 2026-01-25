@@ -103,7 +103,7 @@ impl<'src> MirConverter<'src> {
         if let Some(x) = self.vars_by_name.get(name) {
             *x
         } else {
-            self.add_var(synth!(name.into())) // TODO: add the variable with the correct span
+            panic!("{name} should have already been added");
         }
     }
 
@@ -231,7 +231,7 @@ impl<'src> MirConverter<'src> {
         stat: Spanned<&'src hir::Stat<'src>>,
         break_block_id: Option<BasicBlockId>,
         continue_block_id: Option<BasicBlockId>,
-    ) -> bool {
+    ) -> Option<Spanned<Terminator>> {
         match stat.0 {
             hir::Stat::Assign { vars, exps } => {
                 // Figure out what assignments we need to make first
@@ -489,58 +489,95 @@ impl<'src> MirConverter<'src> {
                 self.cur_block.id = continue_block;
             }
             hir::Stat::Break => {
-                if let Some(break_block_id) = break_block_id {
-                    self.basic_blocks
-                        .push(self.cur_block.finish_and_reset(Some(s!(
-                            Terminator::Jump(JumpTarget {
-                                targ_bb: break_block_id,
-                                remaps: vec![],
-                            }),
-                            stat.1
-                        ))));
+                return if let Some(break_block_id) = break_block_id {
+                    Some(s!(
+                        Terminator::Jump(JumpTarget {
+                            targ_bb: break_block_id,
+                            remaps: vec![],
+                        }),
+                        stat.1
+                    ))
                 } else {
-                    self.basic_blocks
-                        .push(self.cur_block.finish_and_reset(Some(s!(
-                            Terminator::DeferError(synth!("break executed outside of loop".into())),
-                            stat.1
-                        ))));
-                }
-                return true;
+                    Some(s!(
+                        Terminator::DeferError(synth!("break executed outside of loop".into())),
+                        stat.1
+                    ))
+                };
             }
             hir::Stat::RtError(x) => {
-                self.basic_blocks
-                    .push(self.cur_block.finish_and_reset(Some(s!(
-                        Terminator::DeferError(synth!((&**x).into())), // TODO: use RtError?
-                        stat.1
-                    ))));
-                return true;
+                return Some(s!(
+                    Terminator::DeferError(synth!((&**x).into())), // TODO: use RtError?
+                    stat.1
+                ));
             }
             x => todo!("{x:?}"),
         }
-        false
+        None
     }
 
     fn write_block_inner(
         &mut self,
         block_id: BasicBlockId,
         block: &'src hir::Block<'src>,
-        terminator: Option<Spanned<Terminator>>,
+        mut terminator: Option<Spanned<Terminator>>,
         break_block_id: Option<BasicBlockId>,
         continue_block_id: Option<BasicBlockId>,
     ) {
         self.cur_block.id = block_id;
+        let vars_pre_block = block
+            .import_locals
+            .iter()
+            .map(|x| (x.clone(), self.vars_by_name[x]))
+            .collect::<HashMap<_, _>>();
+        let mut ignore_retstat = false;
         for stat in &block.stats {
-            if self.write_stat(stat.as_ref(), break_block_id, continue_block_id) {
-                return; // Terminator has been created early; bail
+            if let Some(term) = self.write_stat(stat.as_ref(), break_block_id, continue_block_id) {
+                terminator = Some(term);
+                ignore_retstat = true;
+                break;
             }
         }
-        if let Some(retstat) = &block.retstat {
+
+        if let Some(retstat) = &block.retstat && !ignore_retstat {
             let terminator = retstat
                 .as_ref()
                 .map(|x| Terminator::Return(self.convert_list(&x)));
             self.basic_blocks
                 .push(self.cur_block.finish_and_reset(Some(terminator)));
         } else {
+            // Generate remaps
+            let vars_post_block = block
+                .import_locals
+                .iter()
+                .map(|x| (x.clone(), self.vars_by_name[x]))
+                .collect::<HashMap<_, _>>();
+
+            let mut remaps = vec![];
+            for name in vars_pre_block.keys() {
+                if vars_pre_block[name] != vars_post_block[name] {
+                    remaps.push((vars_post_block[name], vars_pre_block[name]));
+                    self.vars_by_name.insert(name.clone(), vars_pre_block[name]);
+                }
+            }
+
+            // Fix terminator remaps
+            match &mut terminator {
+                Some(x) => match &mut x.0 {
+                    Terminator::DeferError(spanned) => {},
+                    Terminator::RtError(spanned, multival) => {},
+                    Terminator::Branch(expr, jump_target_true, jump_target_false) => {
+                        jump_target_true.remaps = remaps.clone();
+                        jump_target_false.remaps = remaps;
+                    },
+                    Terminator::Jump(jump_target) => {
+                        jump_target.remaps = remaps;
+                    },
+                    Terminator::Tailcall(spanned) => {}
+                    Terminator::Return(multival) => {}
+                },
+                None => {},
+            }
+
             self.basic_blocks
                 .push(self.cur_block.finish_and_reset(terminator));
         }

@@ -36,12 +36,22 @@ fn main() {
         let conv = HirConversionContext::new();
         let hir = conv.convert_block(&ast);
 
+        if args.debug {
+            println!("--   HIR output   --");
+            println!("{hir:#?}");
+            println!("-- end HIR output --");
+            println!();
+        }
+
         let mut mir_conv = MirConverter::new_at_root();
         mir_conv.write_block(&hir);
         let mir = mir_conv.finish();
 
         if args.debug {
+            println!("--   MIR output   --");
             println!("{mir:#?}");
+            println!("-- end MIR output --");
+            println!();
         }
 
         LuaEngine::with_userdata(65536, &mir, run_file, populate_env);

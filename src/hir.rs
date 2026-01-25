@@ -712,7 +712,7 @@ impl<'src> HirConversionContext<'src> {
         Self {
             parent_locals: self.parent_locals.union(&self.locals).cloned().collect(),
             import_locals: HashSet::new(),
-            locals: self.locals.clone(),
+            locals: HashSet::new(),
             synthetic_counter: self.synthetic_counter.clone(),
         }
     }
