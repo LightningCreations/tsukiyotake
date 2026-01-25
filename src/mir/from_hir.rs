@@ -510,6 +510,14 @@ impl<'src> MirConverter<'src> {
                 }
                 return true;
             }
+            hir::Stat::RtError(x) => {
+                self.basic_blocks
+                    .push(self.cur_block.finish_and_reset(Some(s!(
+                        Terminator::DeferError(synth!((&**x).into())), // TODO: use RtError?
+                        stat.1
+                    ))));
+                return true;
+            }
             x => todo!("{x:?}"),
         }
         false
