@@ -6,6 +6,7 @@ use alloc::sync::Arc;
 use bytemuck::Zeroable;
 use core::alloc::Layout;
 use core::cell::OnceCell;
+use core::cell::RefCell;
 use core::cell::{Cell, UnsafeCell};
 use core::fmt;
 use core::hash::{Hash, Hasher};
@@ -547,7 +548,7 @@ pub struct LuaFrame<'ctx> {
     closure: ArenaPtr<'ctx, LuaFunction<'ctx>>,
     current_block: Cell<usize>,
     current_instruction: Cell<usize>,
-    vars: Box<'ctx, [OnceCell<Multival<'ctx>>]>,
+    vars: Box<'ctx, [RefCell<Option<Multival<'ctx>>>]>,
     ret_val: Cell<Option<Multival<'ctx>>>,
 }
 
@@ -748,11 +749,11 @@ impl<'ctx> LuaEngine<'ctx> {
         let mval = match func {
             LuaFunction::Lua(closure) => {
                 let mut vars = Box::new_uninit_slice_in(closure.def.num_ssa as usize, self.alloc());
-                vars.write_with(|_| OnceCell::new());
+                vars.write_with(|_| RefCell::new(None));
 
                 let mut vars = unsafe { Box::<[MaybeUninit<_>]>::assume_init(vars) };
 
-                vars[0] = OnceCell::from(Multival::Value(self.global_env.get()));
+                vars[0] = RefCell::from(Some(Multival::Value(self.global_env.get())));
 
                 let mut params = params.iter().copied();
 
@@ -765,14 +766,14 @@ impl<'ctx> LuaEngine<'ctx> {
                     .take(closure.def.num_params as usize)
                     .enumerate()
                 {
-                    vars[idx + param_base] = OnceCell::from(Multival::Value(param));
+                    vars[idx + param_base] = RefCell::from(Some(Multival::Value(param)));
                 }
 
                 if closure.def.variadic {
                     let mut vec = Vec::new_in(self.alloc());
                     vec.extend(params);
                     vars[param_base + (closure.def.num_params as usize)] =
-                        OnceCell::from(Multival::Multival(vec));
+                        RefCell::from(Some(Multival::Multival(vec)));
                 }
 
                 Arc::get_mut(frame).unwrap().vars = vars;
@@ -832,7 +833,8 @@ impl<'ctx> LuaEngine<'ctx> {
                                     vals.into_iter(),
                                     core::iter::repeat(Value::nil()),
                                 )) {
-                                    last.vars[id.val() as usize].set(Multival::Value(val));
+                                    *last.vars[id.val() as usize].borrow_mut() =
+                                        Some(Multival::Value(val));
                                 }
                             }
                             crate::mir::Statement::Call(ssa_var_id, function_call) => {
@@ -846,7 +848,7 @@ impl<'ctx> LuaEngine<'ctx> {
                                         let ret = wtry_cf!(self.call_func(cl, params.as_slice()));
 
                                         if let Some(var) = ssa_var_id {
-                                            last.vars[var.val() as usize].set(ret).ok().unwrap();
+                                            *last.vars[var.val() as usize].borrow_mut() = Some(ret);
                                         }
                                     }
                                     _ => {
@@ -908,8 +910,12 @@ impl<'ctx> LuaEngine<'ctx> {
                                     .set(true_branch.targ_bb.id().get() as usize - 1);
 
                                 for (a, b) in &true_branch.remaps {
-                                    let val = last.vars[a.val() as usize].get().cloned().unwrap();
-                                    last.vars[b.val() as usize].set(val).ok().unwrap(); // TODO: Print repr of Value and make this make sense
+                                    let val = last.vars[a.val() as usize]
+                                        .borrow()
+                                        .as_ref()
+                                        .cloned()
+                                        .unwrap();
+                                    *last.vars[b.val() as usize].borrow_mut() = Some(val); // TODO: Print repr of Value and make this make sense
                                 }
                             } else {
                                 last.current_instruction.set(0);
@@ -917,8 +923,12 @@ impl<'ctx> LuaEngine<'ctx> {
                                     .set(false_branch.targ_bb.id().get() as usize - 1);
 
                                 for (a, b) in &false_branch.remaps {
-                                    let val = last.vars[a.val() as usize].get().cloned().unwrap();
-                                    last.vars[b.val() as usize].set(val).ok().unwrap(); // TODO: Print repr of Value and make this make sense
+                                    let val = last.vars[a.val() as usize]
+                                        .borrow()
+                                        .as_ref()
+                                        .cloned()
+                                        .unwrap();
+                                    *last.vars[b.val() as usize].borrow_mut() = Some(val); // TODO: Print repr of Value and make this make sense
                                 }
                             }
                             ControlFlow::Continue(())
@@ -929,8 +939,12 @@ impl<'ctx> LuaEngine<'ctx> {
                                 .set(jump_target.targ_bb.id().get() as usize - 1);
 
                             for (a, b) in &jump_target.remaps {
-                                let val = last.vars[a.val() as usize].get().cloned().unwrap();
-                                last.vars[b.val() as usize].set(val).ok().unwrap(); // TODO: Print repr of Value and make this make sense
+                                let val = last.vars[a.val() as usize]
+                                    .borrow()
+                                    .as_ref()
+                                    .cloned()
+                                    .unwrap();
+                                *last.vars[b.val() as usize].borrow_mut() = Some(val); // TODO: Print repr of Value and make this make sense
                             }
                             ControlFlow::Continue(())
                         }
@@ -1051,7 +1065,8 @@ impl<'ctx> LuaEngine<'ctx> {
             mir::Expr::Nil => Ok(Value::nil()),
             mir::Expr::Var(ssa_var_id) => {
                 match frame.vars[ssa_var_id.val() as usize]
-                    .get()
+                    .borrow()
+                    .as_ref()
                     .expect("Initialized ssa var expected")
                 {
                     Multival::Value(val) => Ok(*val),
