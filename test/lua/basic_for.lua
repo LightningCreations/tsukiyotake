@@ -1,3 +1,3 @@
-for i = 1,5 do
+for i = 9,1,-0.5 do
     print(i)
 end

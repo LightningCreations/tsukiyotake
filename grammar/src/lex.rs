@@ -118,9 +118,8 @@ pub enum Token<'src> {
     #[token("...")]
     DotDotDot,
 
-    #[regex("[1-9][0-9]*(\\.[0-9]+)?([eE][1-9][0-9]*)?", |lexer| lexer.slice())]
+    #[regex(r#"(([1-9][0-9]*)|0)(\.[0-9]+)?([eE][1-9][0-9]*)?"#, |lexer| lexer.slice())]
     #[regex("0x[0-9A-Fa-f]*(\\.[0-9A-Fa-f]*)?([pP][1-9][0-9]*)?", |lexer| lexer.slice())]
-    #[token("0", |lexer| lexer.slice())]
     Number(&'src str),
 
     #[regex(r#""([^"\n\r\\]|(\\[\\nr'"abtv])|(\\u\{[0-9A-Fa-f]{1,8}\})|(\\z[[:space:]]*)|(\\[0-9]{1,3})|(\\x[0-9A-Fa-f]{2}))*""#, |lexer| lexer.slice())]

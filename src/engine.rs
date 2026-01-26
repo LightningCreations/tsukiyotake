@@ -1134,6 +1134,8 @@ impl<'ctx> LuaEngine<'ctx> {
 
                 match (x.op, rhs.unpack()) {
                     (UnOp::Not, _) => Ok(Value::new_bool(!rhs.bool_test())),
+                    (UnOp::Unm, UnpackedValue::Int(rhs)) => Ok(Value::new_int(rhs.wrapping_neg())),
+                    (UnOp::Unm, UnpackedValue::Float(rhs)) => Ok(Value::new_float(-rhs)),
                     x => todo!("{x:?}"),
                 }
             }
@@ -1163,6 +1165,48 @@ impl<'ctx> LuaEngine<'ctx> {
                             _ => unreachable!(),
                         })),
                         (
+                            BinOpClass::NormalArithmetic,
+                            UnpackedValue::Int(lhs),
+                            UnpackedValue::Float(rhs),
+                        ) => {
+                            let lhs = lhs as f64;
+                            Ok(Value::new_float(match x.op {
+                                BinOp::Add => lhs + rhs,
+                                BinOp::Sub => lhs - rhs,
+                                BinOp::Mul => lhs * rhs,
+                                BinOp::Idiv => (lhs / rhs).floor(),
+                                BinOp::Mod => lhs - (lhs / rhs).floor() * rhs, // TODO: see if there's a better way to do this
+                                _ => unreachable!(),
+                            }))
+                        }
+                        (
+                            BinOpClass::NormalArithmetic,
+                            UnpackedValue::Float(lhs),
+                            UnpackedValue::Int(rhs),
+                        ) => {
+                            let rhs = rhs as f64;
+                            Ok(Value::new_float(match x.op {
+                                BinOp::Add => lhs + rhs,
+                                BinOp::Sub => lhs - rhs,
+                                BinOp::Mul => lhs * rhs,
+                                BinOp::Idiv => (lhs / rhs).floor(),
+                                BinOp::Mod => lhs - (lhs / rhs).floor() * rhs, // TODO: see if there's a better way to do this
+                                _ => unreachable!(),
+                            }))
+                        }
+                        (
+                            BinOpClass::NormalArithmetic,
+                            UnpackedValue::Float(lhs),
+                            UnpackedValue::Float(rhs),
+                        ) => Ok(Value::new_float(match x.op {
+                            BinOp::Add => lhs + rhs,
+                            BinOp::Sub => lhs - rhs,
+                            BinOp::Mul => lhs * rhs,
+                            BinOp::Idiv => (lhs / rhs).floor(),
+                            BinOp::Mod => lhs - (lhs / rhs).floor() * rhs, // TODO: see if there's a better way to do this
+                            _ => unreachable!(),
+                        })),
+                        (
                             BinOpClass::SpecialArithmetic,
                             UnpackedValue::Float(lhs),
                             UnpackedValue::Float(rhs),
@@ -1184,6 +1228,51 @@ impl<'ctx> LuaEngine<'ctx> {
                             BinOpClass::Relational,
                             UnpackedValue::Int(lhs),
                             UnpackedValue::Int(rhs),
+                        ) => Ok(Value::new_bool(match x.op {
+                            BinOp::Eq => lhs == rhs,
+                            BinOp::Neq => lhs != rhs,
+                            BinOp::Lt => lhs < rhs,
+                            BinOp::Gt => lhs > rhs,
+                            BinOp::Le => lhs <= rhs,
+                            BinOp::Ge => lhs >= rhs,
+                            _ => unreachable!(),
+                        })),
+                        (
+                            BinOpClass::Relational,
+                            UnpackedValue::Int(lhs),
+                            UnpackedValue::Float(rhs),
+                        ) => {
+                            let lhs = lhs as f64;
+                            Ok(Value::new_bool(match x.op {
+                                BinOp::Eq => lhs == rhs,
+                                BinOp::Neq => lhs != rhs,
+                                BinOp::Lt => lhs < rhs,
+                                BinOp::Gt => lhs > rhs,
+                                BinOp::Le => lhs <= rhs,
+                                BinOp::Ge => lhs >= rhs,
+                                _ => unreachable!(),
+                            }))
+                        }
+                        (
+                            BinOpClass::Relational,
+                            UnpackedValue::Float(lhs),
+                            UnpackedValue::Int(rhs),
+                        ) => {
+                            let rhs = rhs as f64;
+                            Ok(Value::new_bool(match x.op {
+                                BinOp::Eq => lhs == rhs,
+                                BinOp::Neq => lhs != rhs,
+                                BinOp::Lt => lhs < rhs,
+                                BinOp::Gt => lhs > rhs,
+                                BinOp::Le => lhs <= rhs,
+                                BinOp::Ge => lhs >= rhs,
+                                _ => unreachable!(),
+                            }))
+                        }
+                        (
+                            BinOpClass::Relational,
+                            UnpackedValue::Float(lhs),
+                            UnpackedValue::Float(rhs),
                         ) => Ok(Value::new_bool(match x.op {
                             BinOp::Eq => lhs == rhs,
                             BinOp::Neq => lhs != rhs,
