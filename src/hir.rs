@@ -499,7 +499,112 @@ impl<'src> HirConversionContext<'src> {
                 );
                 stats.push(while_stat);
             }
-            ast::Stat::ForGeneric { names, exps, block } => todo!(),
+            ast::Stat::ForGeneric { names, exps, block } => {
+                // TODO: technically all of this should be happening in a separate context so that the control variable goes out of scope.
+                // Step 1: evaluate expression list and assign to four locals
+                let iter = self.new_local();
+                let state = self.new_local();
+                let init = self.new_local();
+                let closing = self.new_local(); // TODO: tag this as auto-close
+                let setup_stat = synth!(Stat::Local {
+                    names: synth!(vec![
+                        synth!(iter.clone()),
+                        synth!(state.clone()),
+                        synth!(init.clone()),
+                        synth!(closing)
+                    ]),
+                    exps: Some(exps.as_ref().map(|x| {
+                        x.iter()
+                            .map(|x| unbox(self.convert_exp(x.as_ref()), &mut stats))
+                            .collect()
+                    }))
+                });
+                stats.push(setup_stat);
+
+                // Step 2: declare loop variables and initialize the control var
+                let loop_vars = names.as_ref().map(|x| {
+                    x.iter()
+                        .map(|x| {
+                            x.as_ref().map(|x| {
+                                self.locals.insert(x.clone());
+                                x.clone()
+                            })
+                        })
+                        .collect::<Vec<_>>()
+                });
+                let loop_vars_stat = synth!(Stat::Local {
+                    names: loop_vars.clone(),
+                    exps: Some(synth!(vec![synth!(Exp::Var(synth!(Var::Name(synth!(
+                        init
+                    )))))])),
+                });
+                stats.push(loop_vars_stat);
+
+                // Step 3: generate the update statements in AST so the block converter will lower them correctly
+                // TODO: decide if there's a less-stupid way to do this
+                // loop_vars = iter(state, loop_vars[0])
+                let update_stat = synth!(ast::Stat::Assign {
+                    vars: loop_vars.as_ref().map(|x| x
+                        .iter()
+                        .map(|x| s!(ast::Var::Name(x.clone()), x.1.clone()))
+                        .collect()),
+                    exps: synth!(vec![synth!(ast::Exp::PrefixExp(synth!(
+                        ast::PrefixExp::FunctionCall(synth!(ast::FunctionCall {
+                            lhs: Box::new(synth!(ast::PrefixExp::Var(synth!(ast::Var::Name(
+                                synth!(iter)
+                            ))))),
+                            method: None,
+                            args: synth!(ast::Args::List(synth!(vec![
+                                synth!(ast::Exp::PrefixExp(synth!(ast::PrefixExp::Var(synth!(
+                                    ast::Var::Name(synth!(state))
+                                ))))),
+                                synth!(ast::Exp::PrefixExp(synth!(ast::PrefixExp::Var(synth!(
+                                    ast::Var::Name(loop_vars[0].clone())
+                                ))))),
+                            ])))
+                        }))
+                    )))]),
+                });
+                // if loop_vars[0] == nil then break end
+                let break_statement = synth!(ast::Stat::If {
+                    main: (
+                        synth!(ast::Exp::BinExp {
+                            lhs: Box::new(synth!(ast::Exp::PrefixExp(synth!(
+                                ast::PrefixExp::Var(synth!(ast::Var::Name(loop_vars[0].clone())))
+                            )))),
+                            op: BinOp::Eq,
+                            rhs: Box::new(synth!(ast::Exp::Nil))
+                        }),
+                        Box::new(synth!(ast::Block {
+                            stats: vec![synth!(ast::Stat::Break)],
+                            retstat: None
+                        }))
+                    ),
+                    elseifs: vec![],
+                    else_block: None
+                });
+
+                // Step 4: prepend the statements to the AST
+                // TODO: figure out if there's a better way to prepend two statements
+                let mut block = block.clone();
+                block.stats.insert(0, update_stat);
+                block.stats.insert(1, break_statement);
+
+                // Step 5: generate the block
+                let ctx = self.descend();
+                let block = Box::new((*block).as_ref().map(|x| ctx.convert_block(x)));
+                self.grab_locals(&block);
+
+                // Step 6: emit the loop
+                stats.push(s!(
+                    Stat::While {
+                        cond: synth!(Exp::True),
+                        block,
+                        pre_continue_block: None
+                    },
+                    ast.1
+                ));
+            }
             ast::Stat::Function { name, body } => {
                 let mut path = name.path.clone();
                 if let Some(method) = &name.method {
@@ -521,6 +626,7 @@ impl<'src> HirConversionContext<'src> {
             }
             ast::Stat::LocalFunction { name, body } => {
                 let function = self.convert_func_body(body.as_ref(), false);
+                self.locals.insert(name.0.clone());
                 stats.push(s!(
                     Stat::Local {
                         names: synth!(vec![name.clone()]),
