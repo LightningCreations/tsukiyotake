@@ -556,6 +556,7 @@ pub struct LuaFrame<'ctx> {
 pub enum Multival<'ctx> {
     Value(Value<'ctx>),
     Multival(Vec<'ctx, Value<'ctx>>),
+    Upval(ArenaPtr<'ctx, Value<'ctx>>),
 }
 
 impl<'ctx> Multival<'ctx> {
@@ -563,6 +564,7 @@ impl<'ctx> Multival<'ctx> {
         match self {
             Self::Value(v) => core::slice::from_ref(v),
             Self::Multival(v) => v,
+            Self::Upval(val) => panic!("Cannot directly use an upval without dereference"),
         }
     }
 }
@@ -757,7 +759,9 @@ impl<'ctx> LuaEngine<'ctx> {
 
                 let mut params = params.iter().copied();
 
-                // todo: Upvars
+                for (i, upvar) in closure.captures.captures().enumerate() {
+                    vars[i + 1] = RefCell::new(Some(Multival::Upval(upvar)));
+                }
 
                 let param_base = (1 + closure.def.num_upvars) as usize;
                 for (idx, param) in params
@@ -1071,9 +1075,21 @@ impl<'ctx> LuaEngine<'ctx> {
                 {
                     Multival::Value(val) => Ok(*val),
                     Multival::Multival(_) => panic!("Multival not allowed"),
+                    Multival::Upval(_) => panic!("Upval not allowed without deref"),
                 }
             }
-            mir::Expr::ReadUpvar(ssa_var_id) => todo!(),
+            mir::Expr::ReadUpvar(ssa_var_id) => {
+                let val = match frame.vars[ssa_var_id.val() as usize]
+                    .borrow()
+                    .as_ref()
+                    .expect("Initialized ssa var expected")
+                {
+                    Multival::Upval(val) => unsafe { self.resolve_ptr::<Value<'ctx>>(*val).read() },
+                    _ => panic!("Upval expected"),
+                };
+
+                Ok(val)
+            }
             mir::Expr::Extract(multival, _) => todo!(),
             mir::Expr::Table(table_constructor) => {
                 let mut table = Table::new(self);
@@ -1094,7 +1110,30 @@ impl<'ctx> LuaEngine<'ctx> {
                 Ok(table)
             }
             mir::Expr::String(items) => Ok(Value::string_literal(items)),
-            mir::Expr::Closure(closure_def) => todo!(),
+            mir::Expr::Closure(closure_def) => {
+                let captures = &closure_def.captures;
+
+                let mut span = Vec::with_capacity_in(captures.len(), self.alloc());
+
+                let mut captures = captures.iter().map(|v| {
+                    match frame.vars[v.val() as usize]
+                        .borrow()
+                        .as_ref()
+                        .expect("Required an Initialized SSA Val")
+                    {
+                        Multival::Upval(val) => *val,
+                        _ => panic!("Required upval"),
+                    }
+                });
+
+                span.extend(captures);
+
+                let span = CaptureSpan::Direct(span);
+
+                let val = self.create_closure(&closure_def.function, span);
+
+                Ok(val)
+            }
             mir::Expr::Boolean(x) => Ok(Value::new_bool(*x)),
             mir::Expr::Integer(x) => Ok(Value::new_int(*x)),
             mir::Expr::Float(x) => Ok(Value::new_float(f64::from_bits(*x))),
@@ -1362,8 +1401,29 @@ pub struct BacktraceFrame<'ctx> {
 }
 
 pub enum CaptureSpan<'ctx> {
-    Direct(Vec<'ctx, Value<'ctx>>),
-    Indirect(Vec<'ctx, CaptureSpan<'ctx>>),
+    Direct(Vec<'ctx, ArenaPtr<'ctx, Value<'ctx>>>),
+}
+
+impl<'ctx> CaptureSpan<'ctx> {
+    pub fn captures(&self) -> Captures<'ctx, '_> {
+        match self {
+            Self::Direct(v) => Captures {
+                base: Some(v.iter()),
+            },
+        }
+    }
+}
+
+pub struct Captures<'ctx, 'a> {
+    base: Option<core::slice::Iter<'a, ArenaPtr<'ctx, Value<'ctx>>>>,
+}
+
+impl<'ctx, 'a> Iterator for Captures<'ctx, 'a> {
+    type Item = ArenaPtr<'ctx, Value<'ctx>>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.base.as_mut()?.next().copied()
+    }
 }
 
 pub type Vec<'ctx, T> = alloc::vec::Vec<T, &'ctx Arena<'ctx>>;
