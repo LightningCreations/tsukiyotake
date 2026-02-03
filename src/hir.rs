@@ -207,7 +207,8 @@ impl<'src> HirConversionContext<'src> {
             params.insert(0, synth!("self".into()));
         }
 
-        let ctx = self.descend();
+        let mut ctx = self.descend();
+        ctx.locals.extend(params.iter().map(|x| x.0.clone()));
         let block = ast.0.block.as_ref().map(|x| ctx.convert_block(x));
         self.grab_locals(&block);
 
