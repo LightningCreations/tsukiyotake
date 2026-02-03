@@ -113,6 +113,7 @@ pub struct FuncBody<'src> {
     pub params: List<Cow<'src, str>>,
     pub varargs: Option<Spanned<()>>,
     pub block: Spanned<Block<'src>>,
+    pub name: Option<Spanned<Cow<'src, str>>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -197,6 +198,7 @@ impl<'src> HirConversionContext<'src> {
         &mut self,
         ast: Spanned<&ast::FuncBody<'src>>,
         is_method: bool,
+        name: Option<Spanned<Cow<'src, str>>>,
     ) -> Spanned<FuncBody<'src>> {
         let span = ast.1.clone();
         let mut params = ast.0.params.clone();
@@ -213,7 +215,8 @@ impl<'src> HirConversionContext<'src> {
             FuncBody {
                 params,
                 varargs: ast.0.varargs.clone(),
-                block
+                block,
+                name
             },
             span
         )
@@ -607,11 +610,14 @@ impl<'src> HirConversionContext<'src> {
             }
             ast::Stat::Function { name, body } => {
                 let mut path = name.path.clone();
-                if let Some(method) = &name.method {
+                let (name, is_method) = if let Some(method) = &name.method {
                     path.push(method.clone());
                     path.1.end = method.1.end;
-                }
-                let body = self.convert_func_body(body.as_ref(), name.method.is_some());
+                    (Some(method.clone()), true)
+                } else {
+                    (name.path.last().cloned(), false)
+                };
+                let body = self.convert_func_body(body.as_ref(), is_method, name);
                 let stat = s!(
                     Stat::Assign {
                         vars: synth!(vec![unbox(
@@ -625,7 +631,7 @@ impl<'src> HirConversionContext<'src> {
                 stats.push(stat);
             }
             ast::Stat::LocalFunction { name, body } => {
-                let function = self.convert_func_body(body.as_ref(), false);
+                let function = self.convert_func_body(body.as_ref(), false, Some(name.clone()));
                 self.locals.insert(name.0.clone());
                 stats.push(s!(
                     Stat::Local {
@@ -705,7 +711,9 @@ impl<'src> HirConversionContext<'src> {
             ast::Exp::NumeralFloat(x) => Exp::NumeralFloat(x.clone()),
             ast::Exp::LiteralString(x) => Exp::LiteralString(x.clone()),
             ast::Exp::VarArg => Exp::VarArg,
-            ast::Exp::FunctionDef(x) => Exp::FunctionDef(self.convert_func_body(x.as_ref(), false)),
+            ast::Exp::FunctionDef(x) => {
+                Exp::FunctionDef(self.convert_func_body(x.as_ref(), false, None))
+            }
             ast::Exp::PrefixExp(x) => unbox(self.convert_prefix_exp(x.as_ref()), &mut stats).0,
             ast::Exp::TableConstructor(x) => {
                 let mut hash_part = Vec::new();

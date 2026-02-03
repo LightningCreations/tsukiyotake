@@ -173,7 +173,10 @@ impl<'src> MirConverter<'src> {
             }
             hir::Exp::FunctionDef(x) => {
                 let mut new_conv = MirConverter::new(
-                    synth!("<TODO: DETERMINE CANONICAL NAME>".into()),
+                    x.name
+                        .as_ref()
+                        .cloned()
+                        .unwrap_or_else(|| synth!(Cow::Borrowed("<UNKNOWN CANONICAL NAME>"))),
                     &x.block
                         .import_locals
                         .iter()
@@ -538,7 +541,9 @@ impl<'src> MirConverter<'src> {
             }
         }
 
-        if let Some(retstat) = &block.retstat && !ignore_retstat {
+        if let Some(retstat) = &block.retstat
+            && !ignore_retstat
+        {
             let terminator = retstat
                 .as_ref()
                 .map(|x| Terminator::Return(self.convert_list(&x)));
@@ -563,19 +568,19 @@ impl<'src> MirConverter<'src> {
             // Fix terminator remaps
             match &mut terminator {
                 Some(x) => match &mut x.0 {
-                    Terminator::DeferError(spanned) => {},
-                    Terminator::RtError(spanned, multival) => {},
+                    Terminator::DeferError(spanned) => {}
+                    Terminator::RtError(spanned, multival) => {}
                     Terminator::Branch(expr, jump_target_true, jump_target_false) => {
                         jump_target_true.remaps = remaps.clone();
                         jump_target_false.remaps = remaps;
-                    },
+                    }
                     Terminator::Jump(jump_target) => {
                         jump_target.remaps = remaps;
-                    },
+                    }
                     Terminator::Tailcall(spanned) => {}
                     Terminator::Return(multival) => {}
                 },
-                None => {},
+                None => {}
             }
 
             self.basic_blocks
