@@ -1,11 +1,9 @@
 use alloc::alloc::AllocError;
 use alloc::alloc::Allocator;
-use alloc::string::String;
 use alloc::string::ToString;
 use alloc::sync::Arc;
 use bytemuck::Zeroable;
 use core::alloc::Layout;
-use core::cell::OnceCell;
 use core::cell::RefCell;
 use core::cell::{Cell, UnsafeCell};
 use core::fmt;
@@ -734,7 +732,10 @@ impl<'ctx> LuaEngine<'ctx> {
         let func = unsafe { &mut *(self.resolve_ptr(val)) };
         for fr in &mut *frames {
             if fr.closure == val && matches!(func, LuaFunction::Rust(_)) {
-                return Err(self.error(Value::string_literal(b"Cannot reenter rust functions")));
+                return Err(self.error(
+                    Value::string_literal(b"Cannot reenter rust functions"),
+                    None,
+                ));
             }
         }
 
@@ -830,6 +831,7 @@ impl<'ctx> LuaEngine<'ctx> {
             LuaFunction::Lua(l) => match l.def.blocks.get(last.current_block.get()) {
                 Some(block) => match block.stats.get(last.current_instruction.get()) {
                     Some(stat) => {
+                        let span = stat.1.clone();
                         match &**stat {
                             crate::mir::Statement::Multideclare(ssa_var_ids, multival) => {
                                 let vals = wtry_cf!(self.eval_multi(&multival, &last));
@@ -856,9 +858,11 @@ impl<'ctx> LuaEngine<'ctx> {
                                         }
                                     }
                                     _ => {
-                                        return ControlFlow::Break(Err(
-                                            self.type_error(val.type_of(), "call")
-                                        ));
+                                        return ControlFlow::Break(Err(self.type_error(
+                                            val.type_of(),
+                                            "call",
+                                            span,
+                                        )));
                                     }
                                 }
                             }
@@ -872,6 +876,7 @@ impl<'ctx> LuaEngine<'ctx> {
                                 index,
                                 value,
                             } => {
+                                let span = stat.1.clone();
                                 let val = wtry_cf!(self.eval(table, &last));
 
                                 match val.unpack() {
@@ -887,9 +892,11 @@ impl<'ctx> LuaEngine<'ctx> {
                                         table.insert(self, key, value);
                                     }
                                     _ => {
-                                        return ControlFlow::Break(Err(
-                                            self.type_error(val.type_of(), "newindex")
-                                        ));
+                                        return ControlFlow::Break(Err(self.type_error(
+                                            val.type_of(),
+                                            "newindex",
+                                            span,
+                                        )));
                                     }
                                 }
                             }
@@ -900,12 +907,18 @@ impl<'ctx> LuaEngine<'ctx> {
                         ControlFlow::Continue(())
                     }
                     None => match &*block.term {
-                        crate::mir::Terminator::DeferError(spanned) => ControlFlow::Break(Err(
-                            self.error(Value::string_literal(spanned.as_bytes())),
-                        )),
-                        crate::mir::Terminator::RtError(spanned, multival) => ControlFlow::Break(
-                            Err(self.error(Value::string_literal(spanned.as_bytes()))),
-                        ),
+                        crate::mir::Terminator::DeferError(spanned) => {
+                            ControlFlow::Break(Err(self.error(
+                                Value::string_literal(spanned.as_bytes()),
+                                Some(spanned.1.clone()),
+                            )))
+                        }
+                        crate::mir::Terminator::RtError(spanned, multival) => {
+                            ControlFlow::Break(Err(self.error(
+                                Value::string_literal(spanned.as_bytes()),
+                                Some(spanned.1.clone()),
+                            )))
+                        }
                         crate::mir::Terminator::Branch(expr, true_branch, false_branch) => {
                             let result = wtry_cf!(self.eval(expr, &last));
                             if result.bool_test() {
@@ -971,10 +984,13 @@ impl<'ctx> LuaEngine<'ctx> {
         }
     }
 
-    pub fn type_error(&'ctx self, ty: Type, op: &'ctx str) -> LuaError<'ctx> {
+    pub fn type_error(&'ctx self, ty: Type, op: &'ctx str, span: Span) -> LuaError<'ctx> {
         // TODO: Add defs
         let _ = (ty, op);
-        self.error(Value::string_literal(b"Type error on operation"))
+        self.error(
+            Value::string_literal(b"Type error on operation"),
+            Some(span),
+        )
     }
 
     fn capture_backtrace(&'ctx self) -> Vec<'ctx, BacktraceFrame<'ctx>> {
@@ -1012,9 +1028,9 @@ impl<'ctx> LuaEngine<'ctx> {
         bt
     }
 
-    pub fn error(&'ctx self, val: Value<'ctx>) -> LuaError<'ctx> {
+    pub fn error(&'ctx self, val: Value<'ctx>, span: Option<Span>) -> LuaError<'ctx> {
         let bt = self.capture_backtrace();
-        LuaError { msg: val, bt }
+        LuaError { msg: val, bt, span }
     }
 
     pub fn debug_error(&'ctx self, err: LuaError<'ctx>) -> impl fmt::Debug + 'ctx {
@@ -1029,6 +1045,7 @@ impl<'ctx> LuaEngine<'ctx> {
                 f.debug_struct("LuaError")
                     .field("message", &DebugAsStr(val))
                     .field("backtrace", &self.1.bt)
+                    .field("span", &self.1.span)
                     .finish_non_exhaustive()
             }
         }
@@ -1138,6 +1155,7 @@ impl<'ctx> LuaEngine<'ctx> {
             mir::Expr::Integer(x) => Ok(Value::new_int(*x)),
             mir::Expr::Float(x) => Ok(Value::new_float(f64::from_bits(*x))),
             mir::Expr::Index(spanned) => {
+                let span = spanned.1.clone();
                 let base = self.eval(&spanned.0.base, frame)?;
                 let index = match &spanned.0.index {
                     Index::Expr(expr) => self.eval(&expr, frame)?,
@@ -1145,26 +1163,28 @@ impl<'ctx> LuaEngine<'ctx> {
                 };
 
                 match base.unpack() {
-                    UnpackedValue::Int(_) => Err(self.type_error(Type::Int, "index")),
-                    UnpackedValue::Bool(_) => Err(self.type_error(Type::Boolean, "index")),
-                    UnpackedValue::Float(_) => Err(self.type_error(Type::Float, "index")),
+                    UnpackedValue::Int(_) => Err(self.type_error(Type::Int, "index", span)),
+                    UnpackedValue::Bool(_) => Err(self.type_error(Type::Boolean, "index", span)),
+                    UnpackedValue::Float(_) => Err(self.type_error(Type::Float, "index", span)),
                     UnpackedValue::String(_) => {
-                        Err(self.type_error(Type::UnmanagedString, "index"))
+                        Err(self.type_error(Type::UnmanagedString, "index", span))
                     }
                     UnpackedValue::Managed(mval) => match mval {
                         ManagedValue::Nil => {
-                            Err(self.type_error(Type::Managed(ManagedType::NullTy), "index"))
+                            Err(self.type_error(Type::Managed(ManagedType::NullTy), "index", span))
                         }
                         ManagedValue::Table(tbl) => {
                             let tbl = unsafe { &*self.resolve_ptr(tbl) };
                             Ok(tbl.get(self, index).unwrap_or_else(Value::nil))
                         }
                         ManagedValue::Closure(_) => {
-                            Err(self.type_error(Type::Managed(ManagedType::Closure), "index"))
+                            Err(self.type_error(Type::Managed(ManagedType::Closure), "index", span))
                         }
-                        ManagedValue::String(_) => {
-                            Err(self.type_error(Type::Managed(ManagedType::ManagedString), "index"))
-                        }
+                        ManagedValue::String(_) => Err(self.type_error(
+                            Type::Managed(ManagedType::ManagedString),
+                            "index",
+                            span,
+                        )),
                     },
                 }
             }
@@ -1321,6 +1341,26 @@ impl<'ctx> LuaEngine<'ctx> {
                             BinOp::Ge => lhs >= rhs,
                             _ => unreachable!(),
                         })),
+                        (
+                            BinOpClass::Bitwise
+                            | BinOpClass::NormalArithmetic
+                            | BinOpClass::SpecialArithmetic,
+                            _,
+                            UnpackedValue::Managed(ManagedValue::Nil),
+                        )
+                        | (
+                            BinOpClass::Bitwise
+                            | BinOpClass::NormalArithmetic
+                            | BinOpClass::SpecialArithmetic,
+                            UnpackedValue::Managed(ManagedValue::Nil),
+                            _,
+                        ) => {
+                            do yeet self.type_error(
+                                Type::Managed(ManagedType::NullTy),
+                                "arithmetic op",
+                                x.1.clone(),
+                            );
+                        }
                         x => todo!("{x:?}"),
                     }
                 } else {
@@ -1462,6 +1502,7 @@ impl<
 pub struct LuaError<'ctx> {
     msg: Value<'ctx>,
     bt: Vec<'ctx, BacktraceFrame<'ctx>>,
+    span: Option<Span>,
 } // For now
 
 pub struct DebugAsStr<'a>(&'a [u8]);
@@ -1506,7 +1547,7 @@ unsafe fn cast_lua_lifetime<'ctx, 'b>(x: &'ctx LuaEngine<'b>) -> &'ctx LuaEngine
 }
 
 pub struct ErasedLuaEngine {
-    inner: LuaEngine<'static>,
+    inner: *mut LuaEngine<'static>,
 }
 
 impl ErasedLuaEngine {
@@ -1522,7 +1563,9 @@ impl ErasedLuaEngine {
     ) -> ErasedLuaEngine {
         let engine = unsafe { LuaEngine::create_unchecked(arena_size) };
 
-        let captured_engine = unsafe { core::mem::transmute(&engine) };
+        let engine = alloc::boxed::Box::into_raw(alloc::boxed::Box::new(engine));
+
+        let captured_engine = unsafe { cast_lua_lifetime(&*engine) };
 
         let mut table = Table::new(captured_engine);
 
@@ -1549,6 +1592,6 @@ impl ErasedLuaEngine {
         &self,
         with_fn: F,
     ) -> R {
-        with_fn(unsafe { core::mem::transmute(&self.inner) })
+        with_fn(unsafe { cast_lua_lifetime(&*self.inner) })
     }
 }

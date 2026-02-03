@@ -6,7 +6,8 @@
     push_mut,
     maybe_uninit_fill,
     try_trait_v2,
-    int_roundings
+    int_roundings,
+    yeet_expr
 )]
 
 extern crate alloc;
