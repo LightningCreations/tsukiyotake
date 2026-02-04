@@ -6,7 +6,7 @@ use bytemuck::Zeroable;
 use core::alloc::Layout;
 use core::cell::RefCell;
 use core::cell::{Cell, UnsafeCell};
-use core::fmt;
+use core::fmt::{self, Write as _};
 use core::hash::{Hash, Hasher};
 use core::marker::PhantomData;
 use core::mem::ManuallyDrop;
@@ -20,6 +20,7 @@ use tsukiyotake_grammar::ast::BinOpClass;
 use tsukiyotake_grammar::ast::UnOp;
 
 use crate::engine::table::Table;
+use crate::helpers::FmtWrapper;
 use crate::mir;
 use crate::mir::FunctionDef;
 use crate::mir::Index;
@@ -1107,7 +1108,11 @@ impl<'ctx> LuaEngine<'ctx> {
 
                 Ok(val)
             }
-            mir::Expr::Extract(multival, _) => todo!(),
+            mir::Expr::Extract(multival, n) => {
+                let mval = self.eval_multi(multival, frame)?;
+
+                Ok(mval[*n as usize])
+            }
             mir::Expr::Table(table_constructor) => {
                 let mut table = Table::new(self);
                 for (idx, expr) in &table_constructor.hash_part {
@@ -1284,6 +1289,43 @@ impl<'ctx> LuaEngine<'ctx> {
                             ([lhs, rhs].concat()).to_vec_in(self.alloc()),
                         ))),
                         (
+                            BinOpClass::Concat,
+                            UnpackedValue::String(lhs),
+                            UnpackedValue::Int(rhs),
+                        ) => {
+                            let mut buf = [0u8; 21];
+                            let _ = core::write!(FmtWrapper(&mut buf), "{rhs}");
+                            let end = buf.iter().position(|v| *v == 0).unwrap_or(21);
+
+                            Ok(self.allocate_managed_value(ManagedString(
+                                ([lhs, &buf[..end]].concat()).to_vec_in(self.alloc()),
+                            )))
+                        }
+                        (
+                            BinOpClass::Concat,
+                            UnpackedValue::Managed(ManagedValue::String(st)),
+                            UnpackedValue::Int(rhs),
+                        ) => {
+                            let mut buf = [0u8; 21];
+                            let _ = core::write!(FmtWrapper(&mut buf), "{rhs}");
+                            let end = buf.iter().position(|v| *v == 0).unwrap_or(21);
+                            let lhs = unsafe { &*self.resolve_ptr(st) };
+                            Ok(self.allocate_managed_value(ManagedString(
+                                ([&lhs.0, &buf[..end]].concat()).to_vec_in(self.alloc()),
+                            )))
+                        }
+                        (
+                            BinOpClass::Concat,
+                            UnpackedValue::Managed(ManagedValue::String(lhs)),
+                            UnpackedValue::Managed(ManagedValue::String(rhs)),
+                        ) => {
+                            let lhs = unsafe { &*self.resolve_ptr(lhs) };
+                            let rhs = unsafe { &*self.resolve_ptr(rhs) };
+                            Ok(self.allocate_managed_value(ManagedString(
+                                ([&*lhs.0, &*rhs.0].concat()).to_vec_in(self.alloc()),
+                            )))
+                        }
+                        (
                             BinOpClass::Relational,
                             UnpackedValue::Int(lhs),
                             UnpackedValue::Int(rhs),
@@ -1400,7 +1442,23 @@ impl<'ctx> LuaEngine<'ctx> {
 
                 Ok(list)
             }
-            mir::Multival::Var { var, count } => todo!(),
+            mir::Multival::Var { var, count } => match frame.vars[var.val() as usize]
+                .borrow()
+                .as_ref()
+                .expect("Expected an initialized ssa var")
+            {
+                Multival::Multival(values) => {
+                    let mut values = values.clone();
+
+                    if let Some(count) = *count {
+                        values.resize(count as usize, Value::nil())
+                    }
+                    Ok(values)
+                }
+                Multival::Value(_) | Multival::Upval(_) => {
+                    panic!("Expected a multival")
+                }
+            },
             mir::Multival::Concat(multivals) => {
                 let mut list = Vec::new_in(self.alloc());
                 for mval in multivals {

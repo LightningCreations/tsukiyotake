@@ -16,6 +16,7 @@ lccc-siphash = { git = "https://github.com/lccc-project/lccc-siphash.git", versi
 ] }
 lock_api = { version = "0.4.14", default-features = false }
 tsukiyotake-grammar = { path = "grammar" }
+replace_with = { version = "0.1", default-features = false }
 
 [features]
 std = ["tsukiyotake-grammar/std"]
