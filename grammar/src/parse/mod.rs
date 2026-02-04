@@ -966,7 +966,7 @@ pub fn parse_func_body<'a, E: Clone + fmt::Debug>(
     // Quick pass for varargs
     let mut varargs = None;
     for (i, x) in params.0.iter().enumerate() {
-        if **x == "varargs" {
+        if **x == "<varargs>" {
             varargs = Some(s!((), x.1.clone()));
             if i != params.len() - 1 {
                 errors.push(ParseError::ExpectedGot {
@@ -977,7 +977,7 @@ pub fn parse_func_body<'a, E: Clone + fmt::Debug>(
             }
         }
     }
-    params.0.retain(|x| **x != "varargs");
+    params.0.retain(|x| **x != "<varargs>");
 
     let block = unbox(parse_block(input), &mut result_span, &mut errors);
 

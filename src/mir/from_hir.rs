@@ -172,7 +172,7 @@ impl<'src> MirConverter<'src> {
                 Expr::Extract(Box::new(self.convert_exp_multival((**x).as_ref())), 0)
             }
             hir::Exp::FunctionDef(x) => {
-                let mut new_conv = MirConverter::new(
+                let mut new_conv = Self::new(
                     x.name
                         .as_ref()
                         .cloned()

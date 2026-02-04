@@ -33,6 +33,13 @@ fn main() {
         let lexer = Token::lexer(&input);
         let ast = parse_block(&mut lexer.spanned().peekable()).unwrap();
 
+        if args.debug {
+            println!("--   AST output   --");
+            println!("{ast:#?}");
+            println!("-- end AST output --");
+            println!();
+        }
+
         let conv = HirConversionContext::new();
         let hir = conv.convert_block(&ast);
 
