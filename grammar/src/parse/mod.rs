@@ -481,6 +481,11 @@ fn parse_atom<'a, E: Clone + fmt::Debug>(
             input.next();
             Some(Exp::LiteralString(s!(str, span)))
         }
+        Some((Ok(Token::DotDotDot), span)) => {
+            update_span(&mut result_span, span);
+            input.next();
+            Some(Exp::VarArg)
+        }
         Some((Ok(Token::OBrace), _)) => {
             let list = parse_list(
                 input,

@@ -78,7 +78,7 @@ impl<'src> MirConverter<'src> {
             result.add_var(param.clone());
         }
         if variadic {
-            result.add_var(synth!("...".into()));
+            result.add_var(synth!("<varargs>".into()));
         }
 
         result
@@ -213,6 +213,10 @@ impl<'src> MirConverter<'src> {
         match exp.0 {
             hir::Exp::FunctionCallResult(x) => Multival::Var {
                 var: self.get_var(&x),
+                count: None,
+            },
+            hir::Exp::VarArg => Multival::Var {
+                var: self.get_var("<varargs>"),
                 count: None,
             },
             _ => Multival::FixedList(vec![self.convert_exp(exp)]),
